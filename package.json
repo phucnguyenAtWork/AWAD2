@@ -9,7 +9,9 @@
     "check-types": "turbo run check-types"
   },
   "devDependencies": {
+    "drizzle-kit": "^0.31.10",
     "prettier": "^3.7.4",
+    "tsx": "^4.21.0",
     "turbo": "^2.8.20",
     "typescript": "5.9.2"
   },
@@ -19,6 +21,12 @@
   "packageManager": "npm@10.9.2",
   "workspaces": [
     "apps/*",
-    "packages/*"
-  ]
+    "packages/*",
+    "services/*"
+  ],
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "drizzle-orm": "^0.45.2",
+    "mysql2": "^3.20.0"
+  }
 }
