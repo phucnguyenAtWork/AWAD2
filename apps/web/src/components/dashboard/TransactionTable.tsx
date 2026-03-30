@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Card } from '../common/Card';
 import type { Transaction } from '../../services/types';
+import { useCurrency } from '../context/CurrencyContext';
 
 interface TransactionTableProps {
   transactions?: Transaction[];
@@ -9,6 +10,7 @@ interface TransactionTableProps {
 }
 
 export function TransactionTable({ transactions: rawTransactions = [], limit = 5, showHeader = true }: TransactionTableProps) {
+  const { formatPrice } = useCurrency();
   const [sortDesc, setSortDesc] = useState(true);
 
   const transactions = useMemo(() => {
@@ -101,7 +103,7 @@ export function TransactionTable({ transactions: rawTransactions = [], limit = 5
                       </td>
                       <td className="py-3 pr-4 text-right">
                         <span className={`text-sm font-semibold ${color}`}>
-                          {displayAmount > 0 ? '+' : ''}{displayAmount.toLocaleString()}₫
+                          {displayAmount > 0 ? '+' : ''}{formatPrice(Math.abs(displayAmount))}
                         </span>
                       </td>
                     </tr>
@@ -131,7 +133,7 @@ export function TransactionTable({ transactions: rawTransactions = [], limit = 5
                       )}
                     </div>
                     <div className={`text-sm font-semibold ${color} whitespace-nowrap`}>
-                      {displayAmount > 0 ? '+' : ''}{displayAmount.toLocaleString()}₫
+                      {displayAmount > 0 ? '+' : ''}{formatPrice(Math.abs(displayAmount))}
                     </div>
                   </div>
 

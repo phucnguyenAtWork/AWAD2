@@ -5,6 +5,7 @@ const INSIGHTS_BASE = (import.meta.env.VITE_INSIGHTS_API_URL ?? 'http://localhos
 
 export type ChatPayload = {
   prompt: string;
+  displayCurrency?: string;
 };
 
 export type ChatResponse = {

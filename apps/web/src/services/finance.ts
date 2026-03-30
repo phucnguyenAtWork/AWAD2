@@ -104,6 +104,16 @@ export const financeService = {
     return mapAccount(data);
   },
 
+  async updateAccount(token: string, id: string, payload: Partial<AccountPayload>, options: RequestOptions = {}): Promise<Account> {
+    const data = await request<BackendAccount, Partial<AccountPayload>>(FINANCE_BASE, `/accounts/${id}`, {
+      method: 'PATCH',
+      token,
+      body: payload,
+      ...options,
+    });
+    return mapAccount(data);
+  },
+
   async listCategories(token: string, accountId?: string, options: RequestOptions = {}): Promise<Category[]> {
     const query = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
     const data = await request<BackendCategory[]>(FINANCE_BASE, `/categories${query}`, { token, ...options });

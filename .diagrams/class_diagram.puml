@@ -250,6 +250,7 @@ ChatService ..> BudgetsController : "HTTP GET /budgets\n(RAG context)"
 ChatService ..> TransactionsController : "HTTP POST /transactions\n(action execution)"
 ChatService ..> BudgetsController : "HTTP POST /budgets\n(action execution)"
 
-ModelClient ..> [Gemini API] : "HTTPS POST\ngenerateContent"
+class "Gemini API" as GeminiAPI <<External>>
+ModelClient ..> GeminiAPI : "HTTPS POST\ngenerateContent"
 
 @enduml

@@ -1,98 +1,98 @@
-@startuml SmartFinance Architecture
+  @startuml SmartFinance Architecture
 
-skinparam component {
-  BackgroundColor #FAFAFA
-  BorderColor #37474F
-}
-skinparam node {
-  BackgroundColor #E3F2FD
-  BorderColor #1565C0
-}
-skinparam database {
-  BackgroundColor #FFFDE7
-  BorderColor #5D4037
-}
-skinparam cloud {
-  BackgroundColor #F3E5F5
-  BorderColor #6A1B9A
-}
-
-node "Client Browser" {
-  [React SPA\n(Vite + TailwindCSS)\nport 5173] as frontend
-}
-
-node "Bun Runtime" {
-  package "Auth Service\nport 4002" as auth_svc {
-    [Auth Controller] as auth_ctrl
-    [Auth Service] as auth_biz
-    [Users Repository] as auth_repo
-    [Rate Limiter] as rate_lim
+  skinparam component {
+    BackgroundColor #FAFAFA
+    BorderColor #37474F
+  }
+  skinparam node {
+    BackgroundColor #E3F2FD
+    BorderColor #1565C0
+  }
+  skinparam database {
+    BackgroundColor #FFFDE7
+    BorderColor #5D4037
+  }
+  skinparam cloud {
+    BackgroundColor #F3E5F5
+    BorderColor #6A1B9A
   }
 
-  package "Finance Service\nport 4001" as fin_svc {
-    [Accounts Controller] as acc_ctrl
-    [Categories Controller] as cat_ctrl
-    [Transactions Controller] as txn_ctrl
-    [Budgets Controller] as bud_ctrl
-    [Services Layer] as fin_biz
-    [Repositories Layer] as fin_repo
+  node "Client Browser" {
+    [React SPA\n(Vite + TailwindCSS)\nport 5173] as frontend
   }
 
-  package "Insights Service\nport 4003" as ins_svc {
-    [Chat Controller] as chat_ctrl
-    [Chat Service\n(RAG Engine)] as chat_biz
-    [Model Client] as model_client
-    [ChatLogs Repository] as chat_repo
+  node "Bun Runtime" {
+    package "Auth Service\nport 4002" as auth_svc {
+      [Auth Controller] as auth_ctrl
+      [Auth Service] as auth_biz
+      [Users Repository] as auth_repo
+      [Rate Limiter] as rate_lim
+    }
+
+    package "Finance Service\nport 4001" as fin_svc {
+      [Accounts Controller] as acc_ctrl
+      [Categories Controller] as cat_ctrl
+      [Transactions Controller] as txn_ctrl
+      [Budgets Controller] as bud_ctrl
+      [Services Layer] as fin_biz
+      [Repositories Layer] as fin_repo
+    }
+
+    package "Insights Service\nport 4003" as ins_svc {
+      [Chat Controller] as chat_ctrl
+      [Chat Service\n(RAG Engine)] as chat_biz
+      [Model Client] as model_client
+      [ChatLogs Repository] as chat_repo
+    }
   }
-}
 
-node "Docker Compose" {
-  database "MySQL Server" as mysql {
-    [auth] as auth_db
-    [finance] as fin_db
-    [insights] as ins_db
+  node "Docker Compose" {
+    database "MySQL Server" as mysql {
+      [auth] as auth_db
+      [finance] as fin_db
+      [insights] as ins_db
+    }
+    [phpMyAdmin\nport 8080] as pma
   }
-  [phpMyAdmin\nport 8080] as pma
-}
 
-cloud "Google Cloud" {
-  [Gemini 2.5\nFlash Lite API] as gemini
-}
+  cloud "Google Cloud" {
+    [Gemini 2.5\nFlash Lite API] as gemini
+  }
 
-' --- Frontend connections ---
-frontend --> auth_ctrl : "HTTP REST\n(login/register)"
-frontend --> acc_ctrl : "HTTP REST\n(CRUD)"
-frontend --> cat_ctrl : "HTTP REST"
-frontend --> txn_ctrl : "HTTP REST"
-frontend --> bud_ctrl : "HTTP REST"
-frontend --> chat_ctrl : "HTTP REST\n(chat/logs)"
+  ' --- Frontend connections ---
+  frontend --> auth_ctrl : "HTTP REST\n(login/register)"
+  frontend --> acc_ctrl : "HTTP REST\n(CRUD)"
+  frontend --> cat_ctrl : "HTTP REST"
+  frontend --> txn_ctrl : "HTTP REST"
+  frontend --> bud_ctrl : "HTTP REST"
+  frontend --> chat_ctrl : "HTTP REST\n(chat/logs)"
 
-' --- Auth internal ---
-auth_ctrl --> auth_biz
-auth_biz --> auth_repo
-auth_repo --> auth_db
-auth_ctrl --> rate_lim
+  ' --- Auth internal ---
+  auth_ctrl --> auth_biz
+  auth_biz --> auth_repo
+  auth_repo --> auth_db
+  auth_ctrl --> rate_lim
 
-' --- Finance internal ---
-acc_ctrl --> fin_biz
-cat_ctrl --> fin_biz
-txn_ctrl --> fin_biz
-bud_ctrl --> fin_biz
-fin_biz --> fin_repo
-fin_repo --> fin_db
+  ' --- Finance internal ---
+  acc_ctrl --> fin_biz
+  cat_ctrl --> fin_biz
+  txn_ctrl --> fin_biz
+  bud_ctrl --> fin_biz
+  fin_biz --> fin_repo
+  fin_repo --> fin_db
 
-' --- Insights internal ---
-chat_ctrl --> chat_biz
-chat_biz --> chat_repo
-chat_biz --> model_client
-chat_repo --> ins_db
-model_client --> gemini : "HTTPS\n(generateContent)"
+  ' --- Insights internal ---
+  chat_ctrl --> chat_biz
+  chat_biz --> chat_repo
+  chat_biz --> model_client
+  chat_repo --> ins_db
+  model_client --> gemini : "HTTPS\n(generateContent)"
 
-' --- Cross-service ---
-chat_biz --> acc_ctrl : "HTTP GET\n(RAG context)"
-chat_biz --> txn_ctrl : "HTTP POST\n(action exec)"
+  ' --- Cross-service ---
+  chat_biz --> acc_ctrl : "HTTP GET\n(RAG context)"
+  chat_biz --> txn_ctrl : "HTTP POST\n(action exec)"
 
-' --- phpMyAdmin ---
-pma --> mysql
+  ' --- phpMyAdmin ---
+  pma --> mysql
 
-@enduml
+  @enduml

@@ -1,0 +1,29 @@
+@startuml RAG_Pipeline
+title RAG Pipeline Pseudocode
+
+start
+:Receive user prompt (text);
+:Load user settings (currency, locale);
+:Fetch finance context
+  - GET /accounts
+  - GET /categories
+  - GET /transactions
+  - GET /budgets;
+:Summarize context (totals, recent tx, top categories);
+:Build system prompt with currency + context summary;
+:Call ModelClient.chat(prompt, context);
+if (model response contains action payload?) then
+  :Parse action (e.g., create_transaction, create_budget);
+  :Validate action (schema + guardrails);
+  if (action is safe?) then
+    :Execute Finance API call;
+    :Capture execution result;
+  else
+    :Inject refusal / safety message;
+  endif
+endif
+:Persist chat log {accountId, userQuery, aiResponse, contextSnapshot};
+:Return AI response (and action result if any) to frontend;
+stop
+
+@enduml

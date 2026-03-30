@@ -4,7 +4,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { useAuth } from '../auth/AuthContext';
 
 export default function SettingsPage() {
-  const { currency, setCurrency } = useCurrency();
+  const { currency, setCurrencyAndSync } = useCurrency();
   const { token, user, refreshProfile } = useAuth();
   const [profile, setProfile] = useState({
     full_name: '',
@@ -111,7 +111,7 @@ export default function SettingsPage() {
                 value={currency}
                 onChange={(e) => {
                   const next = e.target.value === 'USD' ? 'USD' : 'VND';
-                  setCurrency(next);
+                  void setCurrencyAndSync(next);
                 }}
                 className="block w-full sm:w-40 rounded-lg border-slate-200 bg-slate-50 py-2 pl-3 pr-10 text-sm font-medium text-slate-900 focus:border-indigo-500 focus:ring-indigo-500 transition-shadow cursor-pointer"
               >

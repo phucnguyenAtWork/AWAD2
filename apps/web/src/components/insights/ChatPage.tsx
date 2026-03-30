@@ -37,7 +37,7 @@ export function ChatPage() {
     try {
       const { log } = await insightsService.chat(
         token,
-        { accountId, prompt: input.trim(), context: { currency } },
+        { prompt: input.trim(), displayCurrency: currency },
         { onUnauthorized: logout },
       );
       setLogs((prev) => [log, ...prev]);

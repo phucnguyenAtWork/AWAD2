@@ -15,6 +15,7 @@ export const chatController = new Elysia({ prefix: "/insights" })
           userId,
           token,
           prompt: body.prompt,
+          displayCurrency: body.displayCurrency,
         });
         return { response: result.response, log: result.log };
       } catch (err) {
@@ -27,6 +28,7 @@ export const chatController = new Elysia({ prefix: "/insights" })
     {
       body: t.Object({
         prompt: t.String({ minLength: 1 }),
+        displayCurrency: t.Optional(t.String()),
       }),
       detail: {
         tags: ["Insights"],

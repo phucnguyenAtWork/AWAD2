@@ -101,9 +101,9 @@ function computeAnalytics(ctx: FinanceContext, currency: string) {
   };
 }
 
-function buildSystemPrompt(ctx: FinanceContext): string {
-  // Detect user's currency from their accounts (default to VND)
-  const currency = ctx.accounts[0]?.currency ?? "VND";
+function buildSystemPrompt(ctx: FinanceContext, displayCurrency?: string): string {
+  // Use the display currency preference from the frontend, fallback to account currency
+  const currency = displayCurrency || ctx.accounts[0]?.currency || "VND";
   const analytics = computeAnalytics(ctx, currency);
 
   const fmt = (n: number) => `${n.toLocaleString()} ${currency}`;
@@ -155,13 +155,17 @@ ${budgetsList || "  (none)"}
 
 ═══ INSTRUCTIONS ═══
 1. Always respond in English.
-2. Always use ${currency} when displaying monetary amounts.
+2. Always use ${currency} when displaying monetary amounts. Never use a different currency symbol or code.
 3. You can answer questions about the user's spending, income, trends, budgets, and give financial advice based on their REAL data above.
 4. When the user wants to LOG a transaction (e.g., "I spent 50k on coffee", "received 5M salary"), output an action block.
 5. When the user wants to CREATE a budget (e.g., "budget 2M for food this month"), output an action block.
-6. Match categories by name (case-insensitive). If unclear, pick the closest match from their categories list.
+6. CRITICAL — Category matching: You MUST pick the best matching category from the CATEGORIES list above. NEVER use "Uncategorized" if a better match exists. Use semantic understanding:
+   - Food/drink items (coffee, lunch, dinner, snacks, restaurants, groceries) → "Food" or "Grocery"
+   - Utilities, rent, subscriptions → "Bill"
+   - Clothes, electronics, online orders → "Shopping"
+   - Only use "Uncategorized" as an absolute last resort when nothing fits.
 7. Use the user's first account as default unless they specify otherwise.
-8. Currency shorthand: "50k" = 50,000, "2M" = 2,000,000, "1tr" = 1,000,000.
+8. Currency shorthand: "50k" = 50,000, "2M" = 2,000,000, "1tr" = 1,000,000. These amounts are in ${currency}.
 9. Today's date is ${new Date().toISOString().slice(0, 10)}.
 10. Be concise but helpful. If giving spending insights, reference actual numbers from the data.
 
@@ -180,9 +184,11 @@ When creating a budget:
 {"action":"create_budget","data":{"accountId":"<actual-account-id>","categoryId":"<actual-category-id-or-null>","amountLimit":2000000,"period":"MONTHLY","startDate":"2026-03-01","endDate":"2026-03-31"}}
 \`\`\`
 
-IMPORTANT: Always use real IDs from the data above, never placeholder strings like "<id>".
-Always include a friendly confirmation message alongside the action block.
-If you're unsure about any detail, ask the user to clarify before creating the action.`;
+IMPORTANT:
+- Always use real IDs from the CATEGORIES and ACCOUNTS lists above. Never use placeholder strings like "<id>".
+- Always pick the most appropriate categoryId for the transaction. "coffee" → Food category, "electricity" → Bill category, etc.
+- Always include a friendly confirmation message alongside the action block.
+- If you're unsure about any detail, ask the user to clarify before creating the action.`;
 }
 
 type ActionPayload =
@@ -199,9 +205,10 @@ function parseAction(text: string): ActionPayload | null {
   }
 }
 
-async function executeAction(action: ActionPayload, token: string, ctx: FinanceContext): Promise<string> {
+async function executeAction(action: ActionPayload, token: string, ctx: FinanceContext, displayCurrency?: string): Promise<string> {
   const base = env.financeApiUrl;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const currency = displayCurrency || ctx.accounts[0]?.currency || "VND";
 
   if (action.action === "create_transaction") {
     const res = await fetch(`${base}/transactions`, {
@@ -216,7 +223,7 @@ async function executeAction(action: ActionPayload, token: string, ctx: FinanceC
     }
     const tx = (await res.json()) as { type: string; amount: string; description: string | null; categoryId: string | null };
     const catName = ctx.categories.find((c) => c.id === tx.categoryId)?.name ?? "Uncategorized";
-    return `Transaction logged: ${tx.type} ${Number(tx.amount).toLocaleString()} VND — "${tx.description}" [${catName}]`;
+    return `Transaction logged: ${tx.type} ${Number(tx.amount).toLocaleString()} ${currency} — "${tx.description}" [${catName}]`;
   }
 
   if (action.action === "create_budget") {
@@ -232,7 +239,7 @@ async function executeAction(action: ActionPayload, token: string, ctx: FinanceC
     }
     const b = (await res.json()) as { categoryId: string | null; amountLimit: string; period: string };
     const catName = b.categoryId ? ctx.categories.find((c) => c.id === b.categoryId)?.name ?? "Unknown" : "Overall";
-    return `Budget created: ${catName} — limit ${Number(b.amountLimit).toLocaleString()} VND (${b.period})`;
+    return `Budget created: ${catName} — limit ${Number(b.amountLimit).toLocaleString()} ${currency} (${b.period})`;
   }
 
   return "Unknown action";
@@ -242,6 +249,7 @@ export type ChatInput = {
   userId: string;
   token: string;
   prompt: string;
+  displayCurrency?: string;
 };
 
 export const ChatService = {
@@ -250,7 +258,7 @@ export const ChatService = {
     const ctx = await fetchFinanceContext(input.token);
     console.log(`[RAG] Context: ${ctx.accounts.length} accounts, ${ctx.categories.length} categories, ${ctx.transactions.length} transactions, ${ctx.budgets.length} budgets`);
 
-    const systemPrompt = buildSystemPrompt(ctx);
+    const systemPrompt = buildSystemPrompt(ctx, input.displayCurrency);
 
     // 2. Load recent chat history for conversation context
     const recentLogs = await ChatLogsRepository.listByAccount(input.userId, 10);
@@ -273,7 +281,7 @@ export const ChatService = {
     const action = parseAction(aiText);
     if (action) {
       console.log("[RAG] Detected action:", JSON.stringify(action));
-      const actionResult = await executeAction(action, input.token, ctx);
+      const actionResult = await executeAction(action, input.token, ctx, input.displayCurrency);
       // Clean the action block from the visible response
       aiText = aiText.replace(/```action[\s\S]*?```/g, "").trim();
       aiText = `${aiText}\n\n✅ ${actionResult}`;

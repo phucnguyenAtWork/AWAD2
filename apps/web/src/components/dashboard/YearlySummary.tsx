@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Card } from '../common/Card';
 import type { Transaction } from '../../services/types';
+import { useCurrency } from '../context/CurrencyContext';
 
 interface YearlySummaryProps {
   transactions?: Transaction[];
@@ -13,6 +14,7 @@ interface YearData {
 }
 
 export function YearlySummary({ transactions = [] }: YearlySummaryProps) {
+  const { formatPrice } = useCurrency();
 
   const chartData = useMemo(() => {
     if (!transactions || transactions.length === 0) {
@@ -66,7 +68,7 @@ export function YearlySummary({ transactions = [] }: YearlySummaryProps) {
         {chartData.map((d) => (
           <div key={d.year} className="flex flex-1 flex-col items-center justify-end group">
             <div className="flex h-full w-full max-w-[60px] items-end gap-1 mx-auto relative"
-                 title={`Year: ${d.year}\nIncome: ${d.income.toLocaleString()}₫\nExpense: ${d.expense.toLocaleString()}₫`}>
+                 title={`Year: ${d.year}\nIncome: ${formatPrice(d.income)}\nExpense: ${formatPrice(d.expense)}`}>
               {/* Income Bar */}
               <div
                 className="w-1/2 rounded-t-md bg-emerald-400 group-hover:bg-emerald-500 transition-colors"

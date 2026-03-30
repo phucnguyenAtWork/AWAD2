@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import { Layout } from './layout/Layout';
 import { TransactionsPage } from './transactions/TransactionsPage';
 import { AuthProvider } from './auth/AuthContext';
+import { CurrencyProvider } from './context/CurrencyContext';
 import { Login } from './auth/Login';
 import { Logout } from './auth/Logout';
 import { ProtectedRoute } from './auth/ProtectedRoute';
@@ -23,6 +24,7 @@ export function AppShell() {
 
   return (
     <AuthProvider>
+    <CurrencyProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
@@ -87,6 +89,7 @@ export function AppShell() {
           }
         />
       </Routes>
+    </CurrencyProvider>
     </AuthProvider>
   );
 }

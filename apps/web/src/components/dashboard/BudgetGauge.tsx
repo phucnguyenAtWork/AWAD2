@@ -1,4 +1,7 @@
+import { useCurrency } from '../context/CurrencyContext';
+
 export function BudgetGauge({ spent = 0, limit = 0 }) {
+  const { formatPrice } = useCurrency();
   const noBudget = limit === 0;
   const safeLimit = noBudget ? 1 : limit;
   const percentage = noBudget ? 0 : Math.min((spent / safeLimit) * 100, 100);
@@ -65,13 +68,13 @@ export function BudgetGauge({ spent = 0, limit = 0 }) {
         <div className="flex flex-col">
             <span className="font-medium text-slate-400">Spent</span>
             <span className="font-bold text-slate-700 truncate max-w-[80px] sm:max-w-none">
-              {spent.toLocaleString()}₫
+              {formatPrice(spent)}
             </span>
         </div>
         <div className="flex flex-col text-right">
             <span className="font-medium text-slate-400">Limit</span>
             <span className="font-bold text-slate-700 truncate max-w-[80px] sm:max-w-none">
-              {limit.toLocaleString()}₫
+              {formatPrice(limit)}
             </span>
         </div>
       </div>

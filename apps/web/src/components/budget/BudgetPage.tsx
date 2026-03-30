@@ -143,11 +143,40 @@ export function BudgetPage() {
     void loadData();
   };
 
+  // Classify each budget by status using its alertThreshold
+  const budgetStatus = useMemo(() => {
+    const map = new Map<string, 'healthy' | 'at-risk' | 'over'>();
+    for (const b of items) {
+      const spent = spentByBudget.get(b.id) ?? 0;
+      const pct = b.amountLimit > 0 ? spent / b.amountLimit : 0;
+      if (pct >= 1) map.set(b.id, 'over');
+      else if (pct >= b.alertThreshold) map.set(b.id, 'at-risk');
+      else map.set(b.id, 'healthy');
+    }
+    return map;
+  }, [items, spentByBudget]);
+
+  // Sort: over-budget first, then at-risk, then healthy
+  const sortedItems = useMemo(() => {
+    const order = { 'over': 0, 'at-risk': 1, 'healthy': 2 };
+    return [...items].sort((a, b) => {
+      const sa = order[budgetStatus.get(a.id) ?? 'healthy'];
+      const sb = order[budgetStatus.get(b.id) ?? 'healthy'];
+      return sa - sb;
+    });
+  }, [items, budgetStatus]);
+
   const totals = useMemo(() => {
     const limit = items.reduce((sum, b) => sum + b.amountLimit, 0);
     const spent = items.reduce((sum, b) => sum + (spentByBudget.get(b.id) ?? 0), 0);
-    return { limit, spent, remaining: limit - spent, percent: limit > 0 ? (spent / limit) * 100 : 0 };
-  }, [items, spentByBudget]);
+    let overCount = 0;
+    let atRiskCount = 0;
+    for (const [, status] of budgetStatus) {
+      if (status === 'over') overCount++;
+      else if (status === 'at-risk') atRiskCount++;
+    }
+    return { limit, spent, remaining: limit - spent, percent: limit > 0 ? (spent / limit) * 100 : 0, overCount, atRiskCount };
+  }, [items, spentByBudget, budgetStatus]);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto p-4 md:p-0">
@@ -166,7 +195,7 @@ export function BudgetPage() {
       </div>
 
       {!loading && items.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card className="p-5">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Total Limit</p>
             <p className="text-2xl font-bold text-slate-900">{formatPrice(totals.limit)}</p>
@@ -180,6 +209,21 @@ export function BudgetPage() {
             <p className={`text-2xl font-bold ${totals.remaining < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
               {formatPrice(totals.remaining)}
             </p>
+          </Card>
+          <Card className={`p-5 ${(totals.overCount + totals.atRiskCount) > 0 ? 'bg-amber-50 border-amber-200' : ''}`}>
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Budget Health</p>
+            {(totals.overCount + totals.atRiskCount) === 0 ? (
+              <p className="text-2xl font-bold text-emerald-600">All Good</p>
+            ) : (
+              <div className="flex items-baseline gap-3">
+                {totals.overCount > 0 && (
+                  <span className="text-2xl font-bold text-rose-600">{totals.overCount} <span className="text-sm font-medium">over</span></span>
+                )}
+                {totals.atRiskCount > 0 && (
+                  <span className="text-2xl font-bold text-amber-600">{totals.atRiskCount} <span className="text-sm font-medium">at risk</span></span>
+                )}
+              </div>
+            )}
           </Card>
         </div>
       )}
@@ -195,7 +239,7 @@ export function BudgetPage() {
               <tr>
                 <th className="px-6 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">Account</th>
                 <th className="px-6 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">Category</th>
-                <th className="px-6 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide" style={{ minWidth: 180 }}>Progress</th>
+                <th className="px-6 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide" style={{ minWidth: 220 }}>Progress</th>
                 <th className="px-6 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">Period</th>
                 <th className="px-6 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide">Dates</th>
                 <th className="px-6 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wide text-right">Actions</th>
@@ -204,43 +248,85 @@ export function BudgetPage() {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr><td colSpan={6} className="p-8 text-center text-slate-400">Loading...</td></tr>
-              ) : items.length === 0 ? (
+              ) : sortedItems.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-16 text-center text-slate-400">
                     No budgets yet
                   </td>
                 </tr>
               ) : (
-                items.map((b) => {
+                sortedItems.map((b) => {
                   const isConfirming = deleteConfirmId === b.id;
                   const spent = spentByBudget.get(b.id) ?? 0;
-                  const pct = b.amountLimit > 0 ? Math.min((spent / b.amountLimit) * 100, 100) : 0;
-                  const overAlert = pct >= b.alertThreshold * 100;
-                  const overBudget = pct >= 100;
-                  const barColor = overBudget ? 'bg-rose-500' : overAlert ? 'bg-amber-500' : 'bg-indigo-500';
+                  const rawPct = b.amountLimit > 0 ? (spent / b.amountLimit) * 100 : 0;
+                  const barPct = Math.min(rawPct, 100);
+                  const status = budgetStatus.get(b.id) ?? 'healthy';
+                  const thresholdPct = b.alertThreshold * 100;
+                  const barColor = status === 'over' ? 'bg-rose-500' : status === 'at-risk' ? 'bg-amber-500' : 'bg-indigo-500';
+                  const rowBg = status === 'over' ? 'bg-rose-50/40' : status === 'at-risk' ? 'bg-amber-50/40' : '';
                   return (
-                    <tr key={b.id} className="group hover:bg-slate-50/80 transition-colors">
+                    <tr key={b.id} className={`group hover:bg-slate-50/80 transition-colors ${rowBg}`}>
                       <td className="px-6 py-4">
                         <div className="font-semibold text-slate-900">{b.accountName ?? 'Account'}</div>
-                        <div className="text-xs text-slate-500">Alert at {Math.round(b.alertThreshold * 100)}%</div>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800">
-                          {b.categoryName ?? 'Overall'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800">
+                            {b.categoryName ?? 'Overall'}
+                          </span>
+                          {status === 'over' && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 uppercase tracking-wide">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" /><path strokeLinecap="round" strokeLinejoin="round" d="M12 15.75h.008v.008H12v-.008z" /></svg>
+                              Over
+                            </span>
+                          )}
+                          {status === 'at-risk' && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 uppercase tracking-wide">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                              At Risk
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4" style={{ minWidth: 220 }}>
                         <div className="flex items-center justify-between text-xs mb-1.5">
-                          <span className={`font-bold ${overBudget ? 'text-rose-600' : 'text-slate-700'}`}>{formatPrice(spent)}</span>
+                          <span className={`font-bold ${status === 'over' ? 'text-rose-600' : status === 'at-risk' ? 'text-amber-600' : 'text-slate-700'}`}>
+                            {formatPrice(spent)}
+                          </span>
                           <span className="text-slate-400">/ {formatPrice(b.amountLimit)}</span>
                         </div>
-                        <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                        {/* Progress bar with threshold marker */}
+                        <div className="relative w-full h-2.5 rounded-full bg-slate-100">
                           <div
                             className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-                            style={{ width: `${pct}%` }}
+                            style={{ width: `${barPct}%` }}
                           />
+                          {/* Threshold marker line */}
+                          <div
+                            className="absolute top-0 h-full w-0.5 bg-slate-400/70"
+                            style={{ left: `${thresholdPct}%` }}
+                            title={`Alert threshold: ${Math.round(thresholdPct)}%`}
+                          >
+                            <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[9px] text-slate-400 whitespace-nowrap font-medium">
+                              {Math.round(thresholdPct)}%
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-right text-[10px] text-slate-400 mt-0.5">{Math.round(pct)}% used</div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-[10px] text-slate-400">
+                            {rawPct > 100 ? `${Math.round(rawPct)}% used` : `${Math.round(barPct)}% used`}
+                          </span>
+                          {status === 'healthy' && (
+                            <span className="text-[10px] text-slate-400">
+                              {formatPrice(b.amountLimit - spent)} left
+                            </span>
+                          )}
+                          {status === 'over' && (
+                            <span className="text-[10px] font-semibold text-rose-500">
+                              {formatPrice(spent - b.amountLimit)} over
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">{b.period}</td>
                       <td className="px-6 py-4 text-sm text-slate-600">
@@ -327,10 +413,31 @@ export function BudgetPage() {
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-sm font-medium text-slate-700">Warning Threshold</label>
-                  <span className="text-sm font-bold text-indigo-600">{formData.alertThreshold}%</span>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Warning Threshold</label>
+                {/* Visual preview bar */}
+                <div className="relative w-full h-7 rounded-lg bg-slate-100 mb-3 overflow-hidden">
+                  {/* Safe zone */}
+                  <div
+                    className="absolute inset-y-0 left-0 bg-indigo-100 transition-all duration-200"
+                    style={{ width: `${formData.alertThreshold}%` }}
+                  />
+                  {/* Warning zone */}
+                  <div
+                    className="absolute inset-y-0 bg-amber-100 transition-all duration-200"
+                    style={{ left: `${formData.alertThreshold}%`, right: '0%' }}
+                  />
+                  {/* Threshold line */}
+                  <div
+                    className="absolute inset-y-0 w-0.5 bg-amber-500 transition-all duration-200 z-10"
+                    style={{ left: `${formData.alertThreshold}%` }}
+                  />
+                  {/* Labels inside the bar */}
+                  <div className="absolute inset-0 flex items-center text-[10px] font-semibold uppercase tracking-wider px-2">
+                    <span className="text-indigo-500 flex-1 text-center">Safe</span>
+                    <span className="text-amber-600 flex-1 text-center">Warning</span>
+                  </div>
                 </div>
+                {/* Slider */}
                 <input
                   type="range"
                   min="50"
@@ -340,9 +447,17 @@ export function BudgetPage() {
                   onChange={(e) => setFormData((prev) => prev ? { ...prev, alertThreshold: Number(e.target.value) } : prev)}
                   className="w-full accent-indigo-600"
                 />
-                <div className="flex justify-between text-xs text-slate-400 mt-0.5">
-                  <span>50%</span><span>95%</span>
+                {/* Context-aware description */}
+                <div className="flex items-center justify-between mt-1.5">
+                  <span className="text-xs text-slate-400">50%</span>
+                  <span className="text-xs font-semibold text-indigo-600">{formData.alertThreshold}%</span>
+                  <span className="text-xs text-slate-400">95%</span>
                 </div>
+                {formData.amountLimit && Number(formData.amountLimit) > 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5 bg-amber-50 rounded-md px-2.5 py-1.5 text-center">
+                    Alert when spending reaches <strong>{formatPrice(Math.round(Number(formData.amountLimit) * formData.alertThreshold / 100))}</strong> of {formatPrice(Number(formData.amountLimit))} limit
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
