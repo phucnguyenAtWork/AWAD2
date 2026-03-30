@@ -1,0 +1,255 @@
+@startuml SmartFinance Class Diagram
+
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+skinparam class {
+  BackgroundColor #FAFAFA
+  BorderColor #37474F
+  ArrowColor #37474F
+}
+
+' ============================================================
+'  AUTH SERVICE
+' ============================================================
+
+package "Auth Service (port 4002)" #E3F2FD {
+
+  class AuthController <<Controller>> {
+    + POST /auth/register(body): AuthResponse
+    + POST /auth/login(body): AuthResponse
+    + GET /auth/me(): UserProfile
+    - handleError(err: unknown): ErrorResponse
+  }
+
+  class AuthService <<Service>> {
+    + register(input): {user, accessToken}
+    + login(input): {user, accessToken}
+    + profile(userId: string): AuthUser
+  }
+
+  class UsersRepository <<Repository>> {
+    + findById(id: string): AuthUser | undefined
+    + findByPhoneOrEmail(phone, email): AuthUser | undefined
+    + createUser(data): AuthUser
+    + existsWithPhone(phone: string): boolean
+    + existsWithEmail(email: string): boolean
+  }
+
+  class PasswordUtils <<Utility>> {
+    + hashPassword(password: string): Promise<string>
+    + verifyPassword(password, hash): Promise<boolean>
+  }
+
+  class TokenUtils <<Utility>> {
+    + signAccessToken(userId: string): string
+    + verifyAccessToken(token: string): AccessTokenPayload
+  }
+
+  class RateLimiter <<Middleware>> {
+    - store: Map<string, {windowStart, hits}>
+    + middleware(request): void | 429
+  }
+
+  class RequireAuth_Auth <<Middleware>> {
+    + requireAuth(request): void | 401
+  }
+
+  AuthController --> AuthService
+  AuthService --> UsersRepository
+  AuthService --> PasswordUtils
+  AuthService --> TokenUtils
+  AuthController --> RateLimiter
+  AuthController --> RequireAuth_Auth
+}
+
+' ============================================================
+'  FINANCE SERVICE
+' ============================================================
+
+package "Finance Service (port 4001)" #E8F5E9 {
+
+  class AccountsController <<Controller>> {
+    + GET /(query): Account[]
+    + POST /(body): Account
+    + GET /:id(params): Account
+    + PATCH /:id(params, body): Account
+    + DELETE /:id(params): Account
+  }
+
+  class CategoriesController <<Controller>> {
+    + GET /(query): Category[]
+    + POST /(body): Category
+    + GET /:id(params): Category
+    + PATCH /:id(params, body): Category
+    + DELETE /:id(params): Category
+  }
+
+  class TransactionsController <<Controller>> {
+    + GET /(query): Transaction[]
+    + POST /(body): Transaction
+    + GET /:id(params): Transaction
+    + PATCH /:id(params, body): Transaction
+    + DELETE /:id(params): Transaction
+  }
+
+  class BudgetsController <<Controller>> {
+    + GET /(query): Budget[]
+    + POST /(body): Budget
+    + GET /:id(params): Budget
+    + PATCH /:id(params, body): Budget
+    + DELETE /:id(params): Budget
+  }
+
+  class AccountsService <<Service>> {
+    + list(userId?: string): Account[]
+    + get(id: string): Account | undefined
+    + create(data: AccountInput): Account
+    + update(id, data): Account | undefined
+    + delete(id: string): Account | undefined
+  }
+
+  class CategoriesService <<Service>> {
+    + list(accountId?: string): Category[]
+    + get(id: string): Category | undefined
+    + create(data: CategoryInput): Category
+    + update(id, data): Category | undefined
+    + delete(id: string): Category | undefined
+  }
+
+  class TransactionsService <<Service>> {
+    + list(userId?: string): Transaction[]
+    + get(id: string): Transaction | undefined
+    + create(data: TransactionInput): Transaction
+    + update(id, data): Transaction | undefined
+    + delete(id: string): Transaction | undefined
+    - resolveDefaultCategory(userId): string
+  }
+
+  class BudgetsService <<Service>> {
+    + list(accountId?: string): Budget[]
+    + get(id: string): Budget | undefined
+    + create(data: BudgetInput): Budget
+    + update(id, data): Budget | undefined
+    + delete(id: string): Budget | undefined
+  }
+
+  class AccountsRepository <<Repository>> {
+    + listAccounts(userId?): Account[]
+    + getAccount(id): Account | undefined
+    + createAccount(input): Account
+    + updateAccount(id, input): Account | undefined
+    + deleteAccount(id): Account | undefined
+  }
+
+  class CategoriesRepository <<Repository>> {
+    + listCategories(accountId?): Category[]
+    + getCategory(id): Category | undefined
+    + createCategory(input): Category
+    + updateCategory(id, input): Category | undefined
+    + deleteCategory(id): Category | undefined
+    + seedDefaultCategories(accountId): void
+    + getUncategorized(accountId): Category | undefined
+  }
+
+  class TransactionsRepository <<Repository>> {
+    + listTransactions(userId?): Transaction[]
+    + getTransaction(id): Transaction | undefined
+    + createTransaction(input): Transaction
+    + updateTransaction(id, input): Transaction | undefined
+    + deleteTransaction(id): Transaction | undefined
+  }
+
+  class BudgetsRepository <<Repository>> {
+    + listBudgets(accountId?): Budget[]
+    + getBudget(id): Budget | undefined
+    + createBudget(input): Budget
+    + updateBudget(id, input): Budget | undefined
+    + deleteBudget(id): Budget | undefined
+  }
+
+  class RequireAuth_Finance <<Middleware>> {
+    + authGuardConfig: GuardConfig
+    + resolveUserId(request): {userId: string}
+  }
+
+  AccountsController --> AccountsService
+  CategoriesController --> CategoriesService
+  TransactionsController --> TransactionsService
+  BudgetsController --> BudgetsService
+
+  AccountsService --> AccountsRepository
+  AccountsService --> CategoriesRepository : seeds defaults
+  CategoriesService --> CategoriesRepository
+  TransactionsService --> TransactionsRepository
+  TransactionsService --> CategoriesRepository : resolve default
+  BudgetsService --> BudgetsRepository
+
+  AccountsController --> RequireAuth_Finance
+  CategoriesController --> RequireAuth_Finance
+  TransactionsController --> RequireAuth_Finance
+  BudgetsController --> RequireAuth_Finance
+}
+
+' ============================================================
+'  INSIGHTS SERVICE
+' ============================================================
+
+package "Insights Service (port 4003)" #FFF3E0 {
+
+  class ChatController <<Controller>> {
+    + POST /insights/chat(body): ChatResponse
+    + GET /insights/logs(query): ChatLog[]
+    + GET /insights/logs/:id(params): ChatLog
+    + DELETE /insights/logs/:id(params): {success}
+  }
+
+  class ChatService <<Service>> {
+    + chat(input: ChatInput): {response, log}
+    + list(accountId, limit?): ChatLog[]
+    + get(id: number): ChatLog | undefined
+    + delete(id: number): ChatLog | undefined
+    - fetchFinanceContext(token): FinanceContext
+    - computeAnalytics(ctx, currency): Analytics
+    - buildSystemPrompt(ctx): string
+    - parseAction(text): ActionPayload | null
+    - executeAction(action, token, ctx): string
+  }
+
+  class ModelClient <<ExternalClient>> {
+    - GEMINI_URL: string
+    + chat(input: ModelChatRequest): ModelChatResponse
+  }
+
+  class ChatLogsRepository <<Repository>> {
+    + create(log: NewChatLog): ChatLog
+    + listByAccount(accountId, limit): ChatLog[]
+    + get(id: number): ChatLog | undefined
+    + delete(id: number): ChatLog | undefined
+  }
+
+  class RequireAuth_Insights <<Middleware>> {
+    + authGuardConfig: GuardConfig
+    + resolveUserId(request): {userId: string}
+  }
+
+  ChatController --> ChatService
+  ChatService --> ChatLogsRepository
+  ChatService --> ModelClient
+  ChatController --> RequireAuth_Insights
+}
+
+' ============================================================
+'  CROSS-SERVICE RELATIONSHIPS
+' ============================================================
+
+ChatService ..> AccountsController : "HTTP GET /accounts\n(RAG context)"
+ChatService ..> CategoriesController : "HTTP GET /categories\n(RAG context)"
+ChatService ..> TransactionsController : "HTTP GET /transactions\n(RAG context)"
+ChatService ..> BudgetsController : "HTTP GET /budgets\n(RAG context)"
+
+ChatService ..> TransactionsController : "HTTP POST /transactions\n(action execution)"
+ChatService ..> BudgetsController : "HTTP POST /budgets\n(action execution)"
+
+ModelClient ..> [Gemini API] : "HTTPS POST\ngenerateContent"
+
+@enduml

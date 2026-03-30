@@ -1,0 +1,72 @@
+@startuml Register Sequence
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceArrowThickness 1.5
+skinparam roundcorner 8
+
+actor "User" as user
+participant "React\nFrontend" as fe #E3F2FD
+participant "Auth\nController" as ac #BBDEFB
+participant "Auth\nService" as as_ #C8E6C9
+participant "Users\nRepository" as ur #DCEDC8
+database "auth DB" as db #F5F5F5
+participant "Password\nUtils" as pu #FFE0B2
+participant "Token\nUtils" as tu #FFE0B2
+
+user -> fe : Fill registration form\n(phone, password, email, fullName)
+activate fe
+
+fe -> ac : POST /auth/register\n{phone, password, email?, fullName?}
+activate ac
+
+ac -> as_ : register({phone, password, email, fullName})
+activate as_
+
+as_ -> as_ : Validate input with Zod schema
+
+as_ -> ur : existsWithPhone(phone)
+activate ur
+ur -> db : SELECT COUNT(*) FROM auth_users\nWHERE phone = ?
+db --> ur : 0
+ur --> as_ : false
+deactivate ur
+
+opt email provided
+  as_ -> ur : existsWithEmail(email)
+  activate ur
+  ur -> db : SELECT COUNT(*) FROM auth_users\nWHERE email = ?
+  db --> ur : 0
+  ur --> as_ : false
+  deactivate ur
+end
+
+as_ -> pu : hashPassword(password)
+activate pu
+pu --> as_ : bcrypt hash
+deactivate pu
+
+as_ -> ur : createUser({phone, passwordHash, email, fullName})
+activate ur
+ur -> db : INSERT INTO auth_users\nVALUES (UUID(), ...)
+db --> ur : success
+ur -> db : SELECT * WHERE id = ?
+db --> ur : user record
+ur --> as_ : AuthUser
+deactivate ur
+
+as_ -> tu : signAccessToken(user.id)
+activate tu
+tu --> as_ : JWT token
+deactivate tu
+
+as_ --> ac : {user, accessToken}
+deactivate as_
+
+ac --> fe : 201 {user, accessToken}
+deactivate ac
+
+fe -> fe : Store token in localStorage
+fe --> user : Redirect to Onboarding
+deactivate fe
+
+@enduml

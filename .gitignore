@@ -5,6 +5,7 @@ node_modules
 .pnp
 .pnp.js
 .agents
+.cursor
 skills-lock.json
 
 # Local env files
@@ -36,6 +37,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Lock files (using bun.lock instead)
+package-lock.json
+
 # Misc
 .DS_Store
 *.pem
+.claude

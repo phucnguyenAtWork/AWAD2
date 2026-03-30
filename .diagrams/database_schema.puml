@@ -1,0 +1,120 @@
+@startuml SmartFinance Database Schema
+
+!define TABLE(x) entity x << (T,#FFAAAA) >>
+!define PK(x) <b><u>x</u></b>
+!define FK(x) <i>x</i>
+
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FFFDE7
+  BorderColor #5D4037
+  ArrowColor #5D4037
+}
+
+' ============================================================
+'  auth database
+' ============================================================
+
+package "Database: auth" #E3F2FD {
+
+  TABLE(auth_users) {
+    PK(id) : VARCHAR(36) [UUID]
+    --
+    phone : VARCHAR(32) NOT NULL UNIQUE
+    email : VARCHAR(255) UNIQUE
+    password_hash : VARCHAR(60) NOT NULL
+    full_name : VARCHAR(255)
+    created_at : TIMESTAMP DEFAULT NOW()
+  }
+
+}
+
+' ============================================================
+'  finance database
+' ============================================================
+
+package "Database: finance" #E8F5E9 {
+
+  TABLE(accounts) {
+    PK(id) : VARCHAR(36) [UUID]
+    --
+    FK(user_id) : VARCHAR(36) NOT NULL
+    name : VARCHAR(255) NOT NULL
+    type : ENUM('CASH','BANK','WALLET','CREDIT') DEFAULT 'CASH'
+    currency : VARCHAR(8) DEFAULT 'VND'
+    friction_level : ENUM('HIGH','MEDIUM','LOW') DEFAULT 'LOW'
+    created_at : TIMESTAMP DEFAULT NOW()
+  }
+
+  TABLE(categories) {
+    PK(id) : VARCHAR(36) [UUID]
+    --
+    FK(account_id) : VARCHAR(36)
+    name : VARCHAR(128) NOT NULL
+    icon : VARCHAR(50)
+    type : ENUM('EXPENSE','INCOME') DEFAULT 'EXPENSE'
+    created_at : TIMESTAMP DEFAULT NOW()
+  }
+
+  TABLE(transactions) {
+    PK(id) : VARCHAR(36) [UUID]
+    --
+    FK(user_id) : VARCHAR(36) NOT NULL
+    type : ENUM('EXPENSE','INCOME') NOT NULL
+    amount : DECIMAL(14,2) NOT NULL
+    currency : VARCHAR(8) DEFAULT 'VND'
+    description : VARCHAR(512)
+    FK(category_id) : VARCHAR(36)
+    essential : BOOLEAN DEFAULT FALSE
+    tags : JSON
+    occurred_at : DATETIME DEFAULT NOW()
+  }
+
+  TABLE(budgets) {
+    PK(id) : VARCHAR(36) [UUID]
+    --
+    FK(account_id) : VARCHAR(36) NOT NULL
+    FK(category_id) : VARCHAR(36)
+    amount_limit : DECIMAL(14,2) NOT NULL
+    period : ENUM('MONTHLY','WEEKLY') DEFAULT 'MONTHLY'
+    alert_threshold : DECIMAL(3,2) DEFAULT 0.80
+    start_date : DATE NOT NULL
+    end_date : DATE NOT NULL
+    created_at : TIMESTAMP DEFAULT NOW()
+  }
+
+}
+
+' ============================================================
+'  insights database
+' ============================================================
+
+package "Database: insights" #FFF3E0 {
+
+  TABLE(chat_logs) {
+    PK(id) : BIGINT AUTO_INCREMENT
+    --
+    FK(account_id) : CHAR(36) NOT NULL
+    user_query : TEXT
+    ai_response : TEXT
+    context_snapshot : JSON
+    timestamp : TIMESTAMP DEFAULT NOW()
+  }
+
+}
+
+' ============================================================
+'  Relationships with cardinality
+' ============================================================
+
+auth_users ||--o{ accounts : "1 owns N\n(user_id)"
+auth_users ||--o{ transactions : "1 records N\n(user_id)"
+auth_users ||--o{ chat_logs : "1 logs N\n(account_id)"
+
+accounts ||--o{ categories : "1 has N\n(account_id)"
+accounts ||--o{ budgets : "1 has N\n(account_id)"
+
+categories |o--o{ transactions : "0..1 classifies 0..N\n(category_id)"
+categories |o--o{ budgets : "0..1 targets 0..N\n(category_id)"
+
+@enduml

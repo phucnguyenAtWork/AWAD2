@@ -1,0 +1,57 @@
+@startuml Create Transaction Sequence
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceArrowThickness 1.5
+skinparam roundcorner 8
+
+actor "User" as user
+participant "React\nFrontend" as fe #E3F2FD
+participant "Finance\nController" as fc #C8E6C9
+participant "Auth\nMiddleware" as am #FFF9C4
+participant "Transactions\nService" as ts #DCEDC8
+participant "Categories\nRepository" as cr #E8F5E9
+participant "Transactions\nRepository" as tr #E8F5E9
+database "finance DB" as db #F5F5F5
+
+user -> fe : Fill transaction form\n(type, amount, category, description)
+activate fe
+
+fe -> fc : POST /transactions\nAuthorization: Bearer <token>\n{type, amount, categoryId, description}
+activate fc
+
+fc -> am : Verify JWT token
+activate am
+am --> fc : userId extracted from JWT.sub
+deactivate am
+
+fc -> ts : create({userId, type, amount, ...})
+activate ts
+
+alt categoryId is null AND type = "EXPENSE"
+  ts -> cr : getUncategorized(accountId)
+  activate cr
+  cr -> db : SELECT * FROM categories\nWHERE name = 'Uncategorized'
+  db --> cr : category record
+  cr --> ts : categoryId
+  deactivate cr
+end
+
+ts -> tr : createTransaction({id: UUID(), userId, ...})
+activate tr
+tr -> db : INSERT INTO transactions\nVALUES (...)
+db --> tr : success
+tr -> db : SELECT * FROM transactions\nWHERE id = ?
+db --> tr : transaction record
+tr --> ts : Transaction
+deactivate tr
+
+ts --> fc : Transaction
+deactivate ts
+
+fc --> fe : 200 {transaction}
+deactivate fc
+
+fe --> user : Show success,\nupdate transaction list
+deactivate fe
+
+@enduml

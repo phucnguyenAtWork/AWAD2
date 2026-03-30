@@ -1,0 +1,70 @@
+@startuml SmartFinance Use Case Diagram
+
+left to right direction
+skinparam actorStyle awesome
+skinparam packageStyle rectangle
+skinparam usecase {
+  BackgroundColor #F0F4FF
+  BorderColor #4A6FA5
+  ArrowColor #4A6FA5
+}
+
+actor "User" as user
+
+' === Authentication ===
+usecase "Register" as UC_REG
+usecase "Login" as UC_LOGIN
+usecase "View Profile" as UC_PROFILE
+
+' === Account Management ===
+usecase "Manage Accounts" as UC_ACC
+usecase "Manage Categories" as UC_CAT
+
+' === Transactions ===
+usecase "Record Transaction" as UC_TXN
+usecase "Auto-Assign\nCategory" as UC_AUTOCAT
+
+' === Budgets ===
+usecase "Manage Budgets" as UC_BUD
+usecase "Set Per-Category\nLimit" as UC_CATLIMIT
+
+' === Dashboard ===
+usecase "View Dashboard" as UC_DASH
+usecase "View Budget\nProgress" as UC_BUDPROG
+usecase "View Spending\nby Category" as UC_CATSPEND
+usecase "View Monthly\nTrends" as UC_TRENDS
+
+' === AI Insights ===
+usecase "Chat with\nAI Assistant" as UC_CHAT
+usecase "Log Transaction\nvia Natural Language" as UC_NLLOG
+usecase "Create Budget\nvia Natural Language" as UC_NLBUD
+usecase "Ask Spending\nQuestions" as UC_NLASK
+usecase "View Chat History" as UC_HIST
+usecase "Delete Chat Log" as UC_DELLOG
+
+' --- Actor connections ---
+user --> UC_REG
+user --> UC_LOGIN
+user --> UC_PROFILE
+user --> UC_ACC
+user --> UC_CAT
+user --> UC_TXN
+user --> UC_BUD
+user --> UC_DASH
+user --> UC_CHAT
+user --> UC_HIST
+user --> UC_DELLOG
+
+' --- Relationships ---
+UC_TXN ..> UC_AUTOCAT : <<extend>>
+UC_BUD ..> UC_CATLIMIT : <<extend>>
+
+UC_DASH ..> UC_BUDPROG : <<include>>
+UC_DASH ..> UC_CATSPEND : <<include>>
+UC_DASH ..> UC_TRENDS : <<include>>
+
+UC_CHAT ..> UC_NLLOG : <<extend>>
+UC_CHAT ..> UC_NLBUD : <<extend>>
+UC_CHAT ..> UC_NLASK : <<extend>>
+
+@enduml

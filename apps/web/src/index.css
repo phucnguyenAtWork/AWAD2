@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #4f46e5;
+  --radius-xl: 1rem;
+}
+
+.card {
+  @apply bg-white rounded-xl shadow-lg border border-gray-100;
+}
+
+svg:not([class*="w-"]) {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.card-title { @apply text-sm font-medium text-gray-500; }
+.metric { @apply text-3xl font-bold text-gray-900; }
+textarea { @apply border border-gray-300 rounded-lg p-3 w-full focus:ring-indigo-500 focus:border-indigo-500; }

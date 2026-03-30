@@ -1,0 +1,103 @@
+@startuml RAG Chat Sequence
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceArrowThickness 1.5
+skinparam roundcorner 8
+skinparam maxMessageSize 220
+
+actor "User" as user
+participant "React\nChatPage" as fe #E3F2FD
+participant "Insights\nController" as ic #FFE0B2
+participant "Auth\nMiddleware" as am #FFF9C4
+participant "Chat\nService" as cs #FFCC80
+participant "Finance\nAPI" as fa #C8E6C9
+participant "ChatLogs\nRepository" as clr #FFF3E0
+database "insights DB" as idb #F5F5F5
+participant "Gemini\nAPI" as gem #E1BEE7
+
+user -> fe : Type message:\n"How much did I spend this month?"
+activate fe
+
+fe -> ic : POST /insights/chat\nAuthorization: Bearer <token>\n{prompt: "How much did I spend..."}
+activate ic
+
+ic -> am : Verify JWT, extract token
+activate am
+am --> ic : userId + raw token
+deactivate am
+
+ic -> cs : chat({userId, token, prompt})
+activate cs
+
+== Phase 1: Retrieve Financial Context ==
+
+cs -> fa : GET /accounts (Bearer token)
+activate fa
+cs -> fa : GET /categories (Bearer token)
+cs -> fa : GET /transactions (Bearer token)
+cs -> fa : GET /budgets (Bearer token)
+note right of cs : 4 parallel requests\n(Promise.allSettled)
+fa --> cs : accounts[]
+fa --> cs : categories[]
+fa --> cs : transactions[]
+fa --> cs : budgets[]
+deactivate fa
+
+== Phase 2: Compute Analytics ==
+
+cs -> cs : computeAnalytics(context, currency)\n- totalIncome, totalExpense\n- monthIncome, monthExpense\n- categorySpending (ranked)\n- monthlyTrends (last 3 months)
+
+== Phase 3: Build System Prompt ==
+
+cs -> cs : buildSystemPrompt(context)\n- Financial summary\n- Spending by category\n- Monthly trends\n- Accounts, categories, budgets\n- Recent 30 transactions\n- Action format instructions
+
+== Phase 4: Load Conversation History ==
+
+cs -> clr : listByAccount(userId, 10)
+activate clr
+clr -> idb : SELECT * FROM chat_logs\nWHERE account_id = ?\nORDER BY timestamp DESC\nLIMIT 10
+idb --> clr : recent logs
+clr --> cs : ChatLog[10]
+deactivate clr
+
+cs -> cs : Build messages array:\n[...history, userPrompt]
+
+== Phase 5: Call Gemini API ==
+
+cs -> gem : POST generateContent\n{system_instruction: financialContext,\n contents: messages}
+activate gem
+gem --> cs : {candidates: [{content: {parts: [{text}]}}]}
+deactivate gem
+
+== Phase 6: Parse & Execute Actions ==
+
+cs -> cs : parseAction(aiText)\nRegex: /```action\\s*([\\s\\S]*?)```/
+
+alt Action block detected (e.g., create_transaction)
+  cs -> fa : POST /transactions\n{type, amount, description,\n categoryId, occurredAt}
+  activate fa
+  fa --> cs : created transaction
+  deactivate fa
+  cs -> cs : Remove action block from text\nAppend confirmation message
+end
+
+== Phase 7: Save Chat Log ==
+
+cs -> clr : create({accountId, userQuery,\n aiResponse, contextSnapshot})
+activate clr
+clr -> idb : INSERT INTO chat_logs
+clr -> idb : SELECT * FROM chat_logs\nORDER BY id DESC LIMIT 1
+idb --> clr : saved log
+clr --> cs : ChatLog
+deactivate clr
+
+cs --> ic : {response: aiText, log: savedLog}
+deactivate cs
+
+ic --> fe : 200 {response, log}
+deactivate ic
+
+fe --> user : Display AI response\n(with action confirmation badge if action executed)
+deactivate fe
+
+@enduml

@@ -1,0 +1,58 @@
+@startuml Login Sequence
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceArrowThickness 1.5
+skinparam roundcorner 8
+
+actor "User" as user
+participant "React\nFrontend" as fe #E3F2FD
+participant "Auth\nController" as ac #BBDEFB
+participant "Rate\nLimiter" as rl #FFF9C4
+participant "Auth\nService" as as_ #C8E6C9
+participant "Users\nRepository" as ur #DCEDC8
+database "auth DB" as db #F5F5F5
+participant "Token\nUtils" as tu #FFE0B2
+participant "Password\nUtils" as pu #FFE0B2
+
+user -> fe : Enter phone + password
+activate fe
+
+fe -> ac : POST /auth/login\n{phone, password}
+activate ac
+
+ac -> rl : Check rate limit (IP)
+activate rl
+rl --> ac : OK (under limit)
+deactivate rl
+
+ac -> as_ : login({phone, password})
+activate as_
+
+as_ -> ur : findByPhoneOrEmail(phone)
+activate ur
+ur -> db : SELECT * FROM auth_users\nWHERE phone = ?
+db --> ur : user record
+ur --> as_ : AuthUser
+deactivate ur
+
+as_ -> pu : verifyPassword(password, user.passwordHash)
+activate pu
+pu --> as_ : true
+deactivate pu
+
+as_ -> tu : signAccessToken(user.id)
+activate tu
+tu --> as_ : JWT token
+deactivate tu
+
+as_ --> ac : {user, accessToken}
+deactivate as_
+
+ac --> fe : 200 {user, accessToken}
+deactivate ac
+
+fe -> fe : Store token in\nlocalStorage
+fe --> user : Redirect to Dashboard
+deactivate fe
+
+@enduml

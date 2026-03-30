@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "baseUrl": "./src",
+    "allowJs": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "paths": {
+      "@services/*": ["services/*"],
+      "@types/*": ["types/*"],
+      "@components/*": ["components/*"],
+      "@lib/*": ["lib/*"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

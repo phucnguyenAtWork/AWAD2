@@ -1,0 +1,45 @@
+@startuml Budget Progress Tracking Sequence
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceArrowThickness 1.5
+skinparam roundcorner 8
+
+actor "User" as user
+participant "React\nBudgetPage" as fe #E3F2FD
+participant "Finance\nAPI" as fa #C8E6C9
+database "finance DB" as db #F5F5F5
+
+user -> fe : Navigate to /budget
+activate fe
+
+par Fetch all data in parallel
+  fe -> fa : GET /budgets\nAuthorization: Bearer <token>
+  activate fa
+  fa -> db : SELECT * FROM budgets\nWHERE account_id = ?
+  db --> fa : budgets[]
+  fa --> fe : budgets[]
+  deactivate fa
+else
+  fe -> fa : GET /transactions\nAuthorization: Bearer <token>
+  activate fa
+  fa -> db : SELECT * FROM transactions\nWHERE user_id = ?
+  db --> fa : transactions[]
+  fa --> fe : transactions[]
+  deactivate fa
+else
+  fe -> fa : GET /categories\nAuthorization: Bearer <token>
+  activate fa
+  fa -> db : SELECT * FROM categories
+  db --> fa : categories[]
+  fa --> fe : categories[]
+  deactivate fa
+end
+
+fe -> fe : **Compute spending per budget:**\nFOR each budget:\n  Filter transactions WHERE\n    categoryId matches budget.categoryId\n    AND occurredAt >= budget.startDate\n    AND occurredAt <= budget.endDate\n    AND type = 'EXPENSE'\n  spent = SUM(filtered amounts)\n  percentage = spent / budget.amountLimit
+
+fe -> fe : **Render progress bars:**\n  < 80% => indigo (on track)\n  80-100% => amber (warning)\n  > 100% => rose (over budget)
+
+fe --> user : Display budget cards\nwith progress bars
+deactivate fe
+
+@enduml

@@ -1,0 +1,119 @@
+@startuml SmartFinance ERD (Chen Notation)
+
+skinparam linetype ortho
+skinparam defaultFontSize 12
+
+' ============================================================
+'  ENTITIES (rectangles)
+' ============================================================
+
+entity "**auth_users**" as users {
+  * <<PK>> id : VARCHAR(36)
+  --
+  * phone : VARCHAR(32) <<UNIQUE>>
+  email : VARCHAR(255) <<UNIQUE>>
+  * password_hash : VARCHAR(60)
+  full_name : VARCHAR(255)
+  created_at : TIMESTAMP
+}
+
+entity "**accounts**" as accounts {
+  * <<PK>> id : VARCHAR(36)
+  --
+  * <<FK>> user_id : VARCHAR(36)
+  * name : VARCHAR(255)
+  * type : ENUM {CASH, BANK, WALLET, CREDIT}
+  * currency : VARCHAR(8) = 'VND'
+  * friction_level : ENUM {HIGH, MEDIUM, LOW}
+  created_at : TIMESTAMP
+}
+
+entity "**categories**" as categories {
+  * <<PK>> id : VARCHAR(36)
+  --
+  <<FK>> account_id : VARCHAR(36)
+  * name : VARCHAR(128)
+  icon : VARCHAR(50)
+  * type : ENUM {EXPENSE, INCOME}
+  created_at : TIMESTAMP
+}
+
+entity "**transactions**" as transactions {
+  * <<PK>> id : VARCHAR(36)
+  --
+  * <<FK>> user_id : VARCHAR(36)
+  * type : ENUM {EXPENSE, INCOME}
+  * amount : DECIMAL(14,2)
+  * currency : VARCHAR(8) = 'VND'
+  description : VARCHAR(512)
+  <<FK>> category_id : VARCHAR(36)
+  * essential : BOOLEAN = false
+  tags : JSON
+  * occurred_at : DATETIME
+}
+
+entity "**budgets**" as budgets {
+  * <<PK>> id : VARCHAR(36)
+  --
+  * <<FK>> account_id : VARCHAR(36)
+  <<FK>> category_id : VARCHAR(36)
+  * amount_limit : DECIMAL(14,2)
+  * period : ENUM {MONTHLY, WEEKLY}
+  * alert_threshold : DECIMAL(3,2) = 0.80
+  * start_date : DATE
+  * end_date : DATE
+  created_at : TIMESTAMP
+}
+
+entity "**chat_logs**" as chatlogs {
+  * <<PK>> id : BIGINT <<AUTO_INCREMENT>>
+  --
+  * <<FK>> account_id : CHAR(36)
+  user_query : TEXT
+  ai_response : TEXT
+  context_snapshot : JSON
+  timestamp : TIMESTAMP
+}
+
+' ============================================================
+'  RELATIONSHIPS (diamonds with cardinality)
+' ============================================================
+
+' --- Chen-style diamonds ---
+diamond "owns" as d_owns
+diamond "has" as d_has
+diamond "records" as d_records
+diamond "classifies" as d_classifies
+diamond "has\nbudget" as d_accbud
+diamond "targets" as d_targets
+diamond "logs" as d_logs
+
+' --- User → Account (1:N) ---
+users "1" -- d_owns
+d_owns -- "N" accounts
+
+' --- Account → Category (1:N) ---
+accounts "1" -- d_has
+d_has -- "N" categories
+
+' --- User → Transaction (1:N) ---
+users "1" -- d_records
+d_records -- "N" transactions
+
+' --- Category → Transaction (1:N) ---
+categories "1" -- d_classifies
+d_classifies -- "0..N" transactions
+
+' --- Account → Budget (1:N) ---
+accounts "1" -- d_accbud
+d_accbud -- "N" budgets
+
+' --- Category → Budget (1:N optional) ---
+categories "0..1" -- d_targets
+d_targets -- "0..N" budgets
+
+' --- User → ChatLog (1:N) ---
+users "1" -- d_logs
+d_logs -- "N" chatlogs
+
+@enduml

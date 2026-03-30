@@ -1,0 +1,1 @@
+ALTER TABLE `budgets` ADD `category_id` varchar(36);
