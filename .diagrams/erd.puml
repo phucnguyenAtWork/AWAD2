@@ -73,6 +73,12 @@ entity "**chat_logs**" as chatlogs {
   ai_response : TEXT
   context_snapshot : JSON
   timestamp : TIMESTAMP
+  action : JSON
+  model_name : VARCHAR(64)
+  latency_ms : INT
+  prompt_tokens : INT
+  response_tokens : INT
+  request_id : CHAR(36)
 }
 
 ' ============================================================

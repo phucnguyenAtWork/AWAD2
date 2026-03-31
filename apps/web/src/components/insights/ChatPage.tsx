@@ -50,27 +50,34 @@ export function ChatPage() {
   };
 
   const messages = useMemo(() => {
-    const flattened: { id: string | number; role: 'user' | 'ai'; text: string; timestamp: string | null }[] = [];
+    const flattened: { id: string | number; role: 'user' | 'ai'; text: string; timestamp: string | null; latencyMs: number | null }[] = [];
     logs.forEach((log) => {
-      if (log.userQuery) {
-        flattened.push({ id: `${log.id}-u`, role: 'user', text: log.userQuery, timestamp: log.timestamp });
+      if (log.user_query) {
+        flattened.push({ id: `${log.id}-u`, role: 'user', text: log.user_query, timestamp: log.timestamp, latencyMs: null });
       }
-      if (log.aiResponse) {
-        flattened.push({ id: `${log.id}-ai`, role: 'ai', text: log.aiResponse, timestamp: log.timestamp });
+      if (log.ai_response) {
+        flattened.push({ id: `${log.id}-ai`, role: 'ai', text: log.ai_response, timestamp: log.timestamp, latencyMs: log.latency_ms });
       }
     });
     return flattened.sort((a, b) => new Date(a.timestamp ?? 0).getTime() - new Date(b.timestamp ?? 0).getTime());
   }, [logs]);
 
   const renderAiText = (text: string) => {
-    // Split on the action confirmation marker
-    const parts = text.split(/\n\n✅ /);
+    // Split on action confirmation markers
+    const successParts = text.split(/\n\n✅ /);
+    const failureParts = (successParts[0] ?? '').split(/\n\n❌ /);
+
     return (
       <>
-        <div className="whitespace-pre-wrap leading-relaxed">{parts[0]}</div>
-        {parts[1] && (
+        <div className="whitespace-pre-wrap leading-relaxed">{failureParts[0]}</div>
+        {failureParts[1] && (
+          <div className="mt-2 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-rose-800 text-xs font-medium">
+            {failureParts[1]}
+          </div>
+        )}
+        {successParts[1] && (
           <div className="mt-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-emerald-800 text-xs font-medium">
-            ✅ {parts[1]}
+            {successParts[1]}
           </div>
         )}
       </>
@@ -83,7 +90,7 @@ export function ChatPage() {
         <h1 className="text-xl font-semibold text-slate-900 mb-1">AI Finance Assistant</h1>
         <p className="text-sm text-slate-500">
           Log transactions, create budgets, or ask questions naturally.
-          Try: "I spent 50k on coffee" or "Create a 2M budget for food this month"
+          Try: &quot;I spent 50k on coffee&quot; or &quot;Create a 2M budget for food this month&quot;
         </p>
         <p className="text-xs text-slate-400 mt-1">Answers will use your preferred currency: {currency}</p>
       </Card>
@@ -104,6 +111,9 @@ export function ChatPage() {
                 <div className="text-[11px] opacity-70 mb-1 font-medium">{msg.role === 'user' ? 'You' : 'AI Assistant'}</div>
                 {msg.role === 'ai' ? renderAiText(msg.text) : (
                   <div className="whitespace-pre-wrap leading-relaxed">{msg.text}</div>
+                )}
+                {msg.role === 'ai' && msg.latencyMs != null && (
+                  <div className="mt-1.5 text-[10px] text-slate-400">{msg.latencyMs}ms</div>
                 )}
               </div>
             </div>

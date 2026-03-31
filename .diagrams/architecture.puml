@@ -38,11 +38,22 @@
       [Repositories Layer] as fin_repo
     }
 
-    package "Insights Service\nport 4003" as ins_svc {
+    package "Insights Service (TS)\nport 4003" as ins_svc {
       [Chat Controller] as chat_ctrl
-      [Chat Service\n(RAG Engine)] as chat_biz
+      [Chat Service\n(TS RAG)] as chat_biz
       [Model Client] as model_client
       [ChatLogs Repository] as chat_repo
+    }
+  }
+
+  node "Python Runtime" {
+    package "RAG Pipeline (FastAPI)\nport 4004" as rag_svc {
+      [FastAPI Router] as rag_router
+      [Chat Service\n(Python RAG)] as rag_chat
+      [Context Builder\n(TTL Cache)] as rag_ctx
+      [Action Parser\n(Pydantic)] as rag_action
+      [Finance Client\n(httpx)] as rag_fin
+      [Model Client\n(Gemini)] as rag_model
     }
   }
 
@@ -65,7 +76,7 @@
   frontend --> cat_ctrl : "HTTP REST"
   frontend --> txn_ctrl : "HTTP REST"
   frontend --> bud_ctrl : "HTTP REST"
-  frontend --> chat_ctrl : "HTTP REST\n(chat/logs)"
+  frontend --> rag_router : "HTTP REST\n(chat/logs)\nport 4004"
 
   ' --- Auth internal ---
   auth_ctrl --> auth_biz
@@ -81,16 +92,31 @@
   fin_biz --> fin_repo
   fin_repo --> fin_db
 
-  ' --- Insights internal ---
+  ' --- Insights TS internal ---
   chat_ctrl --> chat_biz
   chat_biz --> chat_repo
   chat_biz --> model_client
   chat_repo --> ins_db
-  model_client --> gemini : "HTTPS\n(generateContent)"
+  model_client --> gemini : "HTTPS"
 
-  ' --- Cross-service ---
-  chat_biz --> acc_ctrl : "HTTP GET\n(RAG context)"
-  chat_biz --> txn_ctrl : "HTTP POST\n(action exec)"
+  ' --- RAG Pipeline (Python) internal ---
+  rag_router --> rag_chat
+  rag_chat --> rag_ctx : "build + cache context"
+  rag_chat --> rag_action : "parse + validate"
+  rag_ctx --> rag_fin
+  rag_chat --> rag_model
+  rag_model --> gemini : "HTTPS\n(generateContent)"
+  rag_chat --> ins_db : "aiomysql\n(chat_logs)"
+
+  ' --- RAG cross-service ---
+  rag_fin --> acc_ctrl : "HTTP GET\n(RAG context)"
+  rag_fin --> txn_ctrl : "HTTP GET/POST\n(context + action)"
+  rag_fin --> cat_ctrl : "HTTP GET/POST"
+  rag_fin --> bud_ctrl : "HTTP GET/POST"
+
+  ' --- TS cross-service (legacy) ---
+  chat_biz ..> acc_ctrl : "HTTP GET\n(RAG context)"
+  chat_biz ..> txn_ctrl : "HTTP POST\n(action exec)"
 
   ' --- phpMyAdmin ---
   pma --> mysql

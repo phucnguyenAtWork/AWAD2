@@ -191,10 +191,10 @@ package "Finance Service (port 4001)" #E8F5E9 {
 }
 
 ' ============================================================
-'  INSIGHTS SERVICE
+'  INSIGHTS SERVICE (TypeScript — port 4003)
 ' ============================================================
 
-package "Insights Service (port 4003)" #FFF3E0 {
+package "Insights Service — TS (port 4003)" #FFF3E0 {
 
   class ChatController <<Controller>> {
     + POST /insights/chat(body): ChatResponse
@@ -203,7 +203,7 @@ package "Insights Service (port 4003)" #FFF3E0 {
     + DELETE /insights/logs/:id(params): {success}
   }
 
-  class ChatService <<Service>> {
+  class ChatService_TS <<Service>> {
     + chat(input: ChatInput): {response, log}
     + list(accountId, limit?): ChatLog[]
     + get(id: number): ChatLog | undefined
@@ -215,12 +215,12 @@ package "Insights Service (port 4003)" #FFF3E0 {
     - executeAction(action, token, ctx): string
   }
 
-  class ModelClient <<ExternalClient>> {
+  class ModelClient_TS <<ExternalClient>> {
     - GEMINI_URL: string
     + chat(input: ModelChatRequest): ModelChatResponse
   }
 
-  class ChatLogsRepository <<Repository>> {
+  class ChatLogsRepository_TS <<Repository>> {
     + create(log: NewChatLog): ChatLog
     + listByAccount(accountId, limit): ChatLog[]
     + get(id: number): ChatLog | undefined
@@ -232,25 +232,171 @@ package "Insights Service (port 4003)" #FFF3E0 {
     + resolveUserId(request): {userId: string}
   }
 
-  ChatController --> ChatService
-  ChatService --> ChatLogsRepository
-  ChatService --> ModelClient
+  ChatController --> ChatService_TS
+  ChatService_TS --> ChatLogsRepository_TS
+  ChatService_TS --> ModelClient_TS
   ChatController --> RequireAuth_Insights
+}
+
+' ============================================================
+'  RAG PIPELINE (Python FastAPI — port 4004)
+' ============================================================
+
+package "RAG Pipeline — Python (port 4004)" #FCE4EC {
+
+  class RAGRouter <<FastAPI>> {
+    + POST /insights/chat(body): ChatResponse
+    + GET /insights/logs(query): ChatLogRow[]
+    + GET /insights/logs/{id}: ChatLogRow
+    + DELETE /insights/logs/{id}: {success}
+    + GET /health(): {status, engine}
+  }
+
+  class RAGChatService <<Service>> {
+    + chat(user_id, token, prompt, currency?): ChatResponse
+    - request_id: UUID
+    - timer: monotonic
+  }
+
+  class ContextBuilder <<Retrieval>> {
+    - _cache: TTLCache[str, (FinanceContext, Analytics)]
+    + build_context(token, account_id): (ctx, analytics, currency)
+    + compute_analytics(ctx, currency): Analytics
+    + cap_context(ctx): FinanceContext
+  }
+
+  class PromptTemplate <<Prompt>> {
+    + build_system_prompt(ctx, analytics, currency, display?): str
+  }
+
+  class ActionParser <<Validation>> {
+    + parse_action(text): ActionPayload | None
+    + strip_action_blocks(text): str
+    - _validate_action_data(payload): void
+  }
+
+  class ActionExecutor <<Executor>> {
+    + execute_action(action, token, ctx, currency): str
+  }
+
+  class FinanceClient <<HTTPClient>> {
+    + fetch_context(token): FinanceContext
+    + create_transaction(token, data): dict
+    + create_budget(token, data): dict
+    + create_category(token, data): dict
+  }
+
+  class GeminiClient <<ExternalClient>> {
+    + chat(system_instruction, messages): ModelResponse
+    - prompt_tokens: int | None
+    - response_tokens: int | None
+  }
+
+  class JWTAuth <<Middleware>> {
+    + verify_token(authorization): user_id
+    + extract_raw_token(authorization): str
+  }
+
+  class Database <<Repository>> {
+    + get_pool(): aiomysql.Pool
+    + check_connection(): void
+    + create_log(...): ChatLogRow
+    + list_logs(account_id, limit): ChatLogRow[]
+    + get_log(id): ChatLogRow | None
+    + delete_log(id): ChatLogRow | None
+  }
+
+  RAGRouter --> RAGChatService
+  RAGRouter --> JWTAuth
+  RAGChatService --> ContextBuilder
+  RAGChatService --> PromptTemplate
+  RAGChatService --> ActionParser
+  RAGChatService --> ActionExecutor
+  RAGChatService --> GeminiClient
+  RAGChatService --> Database
+  ContextBuilder --> FinanceClient
+  ActionExecutor --> FinanceClient
+}
+
+' ============================================================
+'  PYDANTIC MODELS (used across Python pipeline)
+' ============================================================
+
+package "Pydantic Models" #F3E5F5 {
+
+  class FinanceContext <<Model>> {
+    accounts: list[Account]
+    categories: list[Category]
+    transactions: list[Transaction]
+    budgets: list[Budget]
+  }
+
+  class ActionPayload <<Model>> {
+    action: ActionType
+    data: dict[str, Any]
+  }
+
+  class TransactionActionData <<Model>> {
+    type: str {INCOME|EXPENSE}
+    amount: float > 0
+    description: str
+    categoryId: str | None
+    occurredAt: str | None
+  }
+
+  class BudgetActionData <<Model>> {
+    accountId: str
+    categoryId: str | None
+    amountLimit: float > 0
+    period: str
+    startDate: str
+    endDate: str
+  }
+
+  class CategoryActionData <<Model>> {
+    name: str
+    type: str {INCOME|EXPENSE}
+    icon: str | None
+  }
+
+  class ChatLogRow <<Model>> {
+    id: int
+    account_id: str
+    user_query: str | None
+    ai_response: str | None
+    context_snapshot: Any
+    action: Any
+    model_name: str | None
+    latency_ms: int | None
+    prompt_tokens: int | None
+    response_tokens: int | None
+    request_id: str | None
+    timestamp: datetime
+  }
+
+  ActionPayload --> TransactionActionData : validates
+  ActionPayload --> BudgetActionData : validates
+  ActionPayload --> CategoryActionData : validates
 }
 
 ' ============================================================
 '  CROSS-SERVICE RELATIONSHIPS
 ' ============================================================
 
-ChatService ..> AccountsController : "HTTP GET /accounts\n(RAG context)"
-ChatService ..> CategoriesController : "HTTP GET /categories\n(RAG context)"
-ChatService ..> TransactionsController : "HTTP GET /transactions\n(RAG context)"
-ChatService ..> BudgetsController : "HTTP GET /budgets\n(RAG context)"
+ChatService_TS ..> AccountsController : "HTTP GET /accounts\n(RAG context)"
+ChatService_TS ..> CategoriesController : "HTTP GET /categories\n(RAG context)"
+ChatService_TS ..> TransactionsController : "HTTP GET /transactions\n(RAG context)"
+ChatService_TS ..> BudgetsController : "HTTP GET /budgets\n(RAG context)"
+ChatService_TS ..> TransactionsController : "HTTP POST /transactions\n(action execution)"
+ChatService_TS ..> BudgetsController : "HTTP POST /budgets\n(action execution)"
 
-ChatService ..> TransactionsController : "HTTP POST /transactions\n(action execution)"
-ChatService ..> BudgetsController : "HTTP POST /budgets\n(action execution)"
+FinanceClient ..> AccountsController : "HTTP GET\n(RAG context)"
+FinanceClient ..> CategoriesController : "HTTP GET/POST"
+FinanceClient ..> TransactionsController : "HTTP GET/POST"
+FinanceClient ..> BudgetsController : "HTTP GET/POST"
 
 class "Gemini API" as GeminiAPI <<External>>
-ModelClient ..> GeminiAPI : "HTTPS POST\ngenerateContent"
+ModelClient_TS ..> GeminiAPI : "HTTPS POST\ngenerateContent"
+GeminiClient ..> GeminiAPI : "HTTPS POST\ngenerateContent"
 
 @enduml

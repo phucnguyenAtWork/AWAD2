@@ -1,29 +1,77 @@
 @startuml RAG_Pipeline
-title RAG Pipeline Pseudocode
+title Python RAG Pipeline (FastAPI — port 4004)
 
 start
-:Receive user prompt (text);
-:Load user settings (currency, locale);
-:Fetch finance context
-  - GET /accounts
-  - GET /categories
-  - GET /transactions
-  - GET /budgets;
-:Summarize context (totals, recent tx, top categories);
-:Build system prompt with currency + context summary;
-:Call ModelClient.chat(prompt, context);
-if (model response contains action payload?) then
-  :Parse action (e.g., create_transaction, create_budget);
-  :Validate action (schema + guardrails);
-  if (action is safe?) then
-    :Execute Finance API call;
-    :Capture execution result;
-  else
-    :Inject refusal / safety message;
-  endif
+:Receive POST /insights/chat\n{prompt, displayCurrency?};
+:JWT auth (PyJWT) → extract userId;
+:Generate request_id (UUID4);
+:Start timer (time.monotonic);
+
+:Check TTL cache for accountId;
+if (cache hit?) then (yes)
+  :Load cached (FinanceContext, Analytics);
+else (no)
+  :finance_client.fetch_context(token)
+    - GET /accounts
+    - GET /categories
+    - GET /transactions
+    - GET /budgets;
+  note right
+    httpx async client
+    with graceful degradation
+    (empty [] on non-401 failure)
+  end note
+  :cap_context()
+    - max 20 transactions
+    - max 3 budgets;
+  :compute_analytics(ctx, currency)
+    - totals, month totals
+    - top 5 category spending
+    - 3-month trend;
+  :Store in TTLCache (30s default);
 endif
-:Persist chat log {accountId, userQuery, aiResponse, contextSnapshot};
-:Return AI response (and action result if any) to frontend;
+
+:build_system_prompt()
+  - Financial summary
+  - Safety rules
+  - Action format (create_transaction,
+    create_budget, create_category)
+  - Category matching instructions
+  - Currency: displayCurrency ?? account.currency;
+
+:Load recent chat history\n(database.list_logs, max 10);
+:Build Gemini messages array\n[...history, user prompt];
+
+:model_client.chat()\n→ Gemini 2.5 Flash Lite API;
+:Capture prompt_tokens, response_tokens;
+
+:action_parser.parse_action(ai_text);
+if (action block found?) then (yes)
+  :Validate with Pydantic\n(TransactionActionData /\n BudgetActionData /\n CategoryActionData);
+  if (validation passes?) then (yes)
+    :action_executor.execute_action()\n→ POST to Finance API;
+    :strip_action_blocks(ai_text)\nAppend "✅ " + confirmation;
+  else (no)
+    :Strip invalid block\nAppend "❌ Validation failed";
+  endif
+else (no)
+endif
+
+:Stop timer → latency_ms;
+
+:database.create_log()
+  account_id, user_query, ai_response,
+  context_snapshot, action (JSON),
+  model_name, latency_ms,
+  prompt_tokens, response_tokens,
+  request_id;
+note right
+  aiomysql pool → insights DB
+  chat_logs table (12 columns)
+end note
+
+:Return ChatResponse
+  {response, log, request_id};
 stop
 
 @enduml

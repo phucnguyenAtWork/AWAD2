@@ -1,7 +1,7 @@
 import { request } from './http';
 import type { JsonValue } from './types';
 
-const INSIGHTS_BASE = (import.meta.env.VITE_INSIGHTS_API_URL ?? 'http://localhost:4003').replace(/\/+$/, '');
+const INSIGHTS_BASE = (import.meta.env.VITE_INSIGHTS_API_URL ?? 'http://localhost:4004').replace(/\/+$/, '');
 
 export type ChatPayload = {
   prompt: string;
@@ -11,14 +11,21 @@ export type ChatPayload = {
 export type ChatResponse = {
   response: string;
   log: InsightLog;
+  request_id: string;
 };
 
 export type InsightLog = {
   id: number;
-  accountId: string;
-  userQuery: string | null;
-  aiResponse: string | null;
-  contextSnapshot: JsonValue | null;
+  account_id: string;
+  user_query: string | null;
+  ai_response: string | null;
+  context_snapshot: JsonValue | null;
+  action: JsonValue | null;
+  model_name: string | null;
+  latency_ms: number | null;
+  prompt_tokens: number | null;
+  response_tokens: number | null;
+  request_id: string | null;
   timestamp: string | null;
 };
 

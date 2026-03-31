@@ -98,6 +98,12 @@ package "Database: insights" #FFF3E0 {
     user_query : TEXT
     ai_response : TEXT
     context_snapshot : JSON
+    action : JSON
+    model_name : VARCHAR(64)
+    latency_ms : INT
+    prompt_tokens : INT
+    response_tokens : INT
+    request_id : VARCHAR(36)
     timestamp : TIMESTAMP DEFAULT NOW()
   }
 

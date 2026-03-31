@@ -7,97 +7,120 @@ skinparam maxMessageSize 220
 
 actor "User" as user
 participant "React\nChatPage" as fe #E3F2FD
-participant "Insights\nController" as ic #FFE0B2
-participant "Auth\nMiddleware" as am #FFF9C4
+participant "FastAPI\nRAG Router\nport 4004" as router #FCE4EC
+participant "JWT Auth\n(PyJWT)" as auth #FFF9C4
 participant "Chat\nService" as cs #FFCC80
-participant "Finance\nAPI" as fa #C8E6C9
-participant "ChatLogs\nRepository" as clr #FFF3E0
-database "insights DB" as idb #F5F5F5
+participant "Context\nBuilder" as ctx #FFE0B2
+participant "TTL Cache" as cache #F5F5F5
+participant "Finance\nClient (httpx)" as fc #C8E6C9
+participant "Finance\nAPI :4001" as fa #A5D6A7
+participant "Prompt\nTemplate" as pt #FFCC80
 participant "Gemini\nAPI" as gem #E1BEE7
+participant "Action\nParser" as ap #FCE4EC
+participant "Action\nExecutor" as ae #FCE4EC
+participant "Database\n(aiomysql)" as db #FFF3E0
+database "insights DB" as idb #F5F5F5
 
-user -> fe : Type message:\n"How much did I spend this month?"
+user -> fe : Type message:\n"I spent 50k on coffee"
 activate fe
 
-fe -> ic : POST /insights/chat\nAuthorization: Bearer <token>\n{prompt: "How much did I spend..."}
-activate ic
+fe -> router : POST /insights/chat\nAuthorization: Bearer <token>\n{prompt, displayCurrency}
+activate router
 
-ic -> am : Verify JWT, extract token
-activate am
-am --> ic : userId + raw token
-deactivate am
+router -> auth : verify_token(authorization)
+activate auth
+auth --> router : userId
+deactivate auth
 
-ic -> cs : chat({userId, token, prompt})
+router -> cs : chat(user_id, token, prompt, currency?)
 activate cs
+note right of cs : Generate request_id (UUID4)\nStart timer
 
-== Phase 1: Retrieve Financial Context ==
+== Phase 1: Retrieve Financial Context (with TTL Cache) ==
 
-cs -> fa : GET /accounts (Bearer token)
-activate fa
-cs -> fa : GET /categories (Bearer token)
-cs -> fa : GET /transactions (Bearer token)
-cs -> fa : GET /budgets (Bearer token)
-note right of cs : 4 parallel requests\n(Promise.allSettled)
-fa --> cs : accounts[]
-fa --> cs : categories[]
-fa --> cs : transactions[]
-fa --> cs : budgets[]
-deactivate fa
+cs -> ctx : build_context(token, account_id)
+activate ctx
+ctx -> cache : get(account_id)
+alt cache miss
+  ctx -> fc : fetch_context(token)
+  activate fc
+  fc -> fa : GET /accounts (Bearer token)
+  fc -> fa : GET /categories (Bearer token)
+  fc -> fa : GET /transactions (Bearer token)
+  fc -> fa : GET /budgets (Bearer token)
+  note right of fc : 4 async httpx requests\nGraceful degradation on failure
+  fa --> fc : accounts[], categories[],\ntransactions[], budgets[]
+  deactivate fc
+  ctx -> ctx : cap_context()\n- max 20 transactions\n- max 3 budgets
+  ctx -> ctx : compute_analytics()\n- totals, month burn\n- top 5 categories\n- 3-month trend
+  ctx -> cache : store (TTL 30s)
+end
+ctx --> cs : (FinanceContext, Analytics, currency)
+deactivate ctx
 
-== Phase 2: Compute Analytics ==
+== Phase 2: Build System Prompt ==
 
-cs -> cs : computeAnalytics(context, currency)\n- totalIncome, totalExpense\n- monthIncome, monthExpense\n- categorySpending (ranked)\n- monthlyTrends (last 3 months)
+cs -> pt : build_system_prompt(ctx, analytics,\ncurrency, displayCurrency)
+activate pt
+pt --> cs : system_instruction (str)
+deactivate pt
 
-== Phase 3: Build System Prompt ==
+== Phase 3: Load Conversation History ==
 
-cs -> cs : buildSystemPrompt(context)\n- Financial summary\n- Spending by category\n- Monthly trends\n- Accounts, categories, budgets\n- Recent 30 transactions\n- Action format instructions
+cs -> db : list_logs(user_id, limit=10)
+activate db
+db -> idb : SELECT ... FROM chat_logs\nWHERE account_id = ?\nORDER BY timestamp DESC LIMIT 10
+idb --> db : recent rows
+db --> cs : ChatLogRow[10]
+deactivate db
 
-== Phase 4: Load Conversation History ==
+cs -> cs : Build messages array:\n[...history, {role:"user", text:prompt}]
 
-cs -> clr : listByAccount(userId, 10)
-activate clr
-clr -> idb : SELECT * FROM chat_logs\nWHERE account_id = ?\nORDER BY timestamp DESC\nLIMIT 10
-idb --> clr : recent logs
-clr --> cs : ChatLog[10]
-deactivate clr
+== Phase 4: Call Gemini API ==
 
-cs -> cs : Build messages array:\n[...history, userPrompt]
-
-== Phase 5: Call Gemini API ==
-
-cs -> gem : POST generateContent\n{system_instruction: financialContext,\n contents: messages}
+cs -> gem : POST generateContent\n{system_instruction,\n contents: messages}
 activate gem
-gem --> cs : {candidates: [{content: {parts: [{text}]}}]}
+gem --> cs : {text, usageMetadata:\n {promptTokenCount, candidatesTokenCount}}
 deactivate gem
 
-== Phase 6: Parse & Execute Actions ==
+== Phase 5: Parse & Execute Action (Pydantic Validated) ==
 
-cs -> cs : parseAction(aiText)\nRegex: /```action\\s*([\\s\\S]*?)```/
+cs -> ap : parse_action(ai_text)
+activate ap
+ap -> ap : regex extract ```action block\nJSON parse\nPydantic validate:\n TransactionActionData\n BudgetActionData\n CategoryActionData
+ap --> cs : ActionPayload | None
+deactivate ap
 
-alt Action block detected (e.g., create_transaction)
-  cs -> fa : POST /transactions\n{type, amount, description,\n categoryId, occurredAt}
-  activate fa
-  fa --> cs : created transaction
-  deactivate fa
-  cs -> cs : Remove action block from text\nAppend confirmation message
+alt Action block detected & valid
+  cs -> ae : execute_action(action, token, ctx, currency)
+  activate ae
+  ae -> fc : create_transaction(token, data)
+  activate fc
+  fc -> fa : POST /transactions\n{type, amount, description,\n categoryId, occurredAt}
+  fa --> fc : created transaction
+  deactivate fc
+  ae --> cs : "Transaction logged: EXPENSE\n50,000 VND — Coffee [Food]"
+  deactivate ae
+  cs -> cs : strip_action_blocks(ai_text)\nAppend "✅ " + confirmation
 end
 
-== Phase 7: Save Chat Log ==
+== Phase 6: Save Chat Log (Extended Schema) ==
 
-cs -> clr : create({accountId, userQuery,\n aiResponse, contextSnapshot})
-activate clr
-clr -> idb : INSERT INTO chat_logs
-clr -> idb : SELECT * FROM chat_logs\nORDER BY id DESC LIMIT 1
-idb --> clr : saved log
-clr --> cs : ChatLog
-deactivate clr
+cs -> db : create_log(\n  account_id, user_query, ai_response,\n  context_snapshot, action (JSON),\n  model_name, latency_ms,\n  prompt_tokens, response_tokens,\n  request_id\n)
+activate db
+db -> idb : INSERT INTO chat_logs\n(12 columns)
+db -> idb : SELECT ... WHERE id = LAST_INSERT_ID()
+idb --> db : saved row
+db --> cs : ChatLogRow
+deactivate db
 
-cs --> ic : {response: aiText, log: savedLog}
+cs --> router : ChatResponse\n{response, log, request_id}
 deactivate cs
 
-ic --> fe : 200 {response, log}
-deactivate ic
+router --> fe : 200 {response, log, request_id}
+deactivate router
 
-fe --> user : Display AI response\n(with action confirmation badge if action executed)
+fe --> user : Display AI response\n+ action result inline\n+ latency_ms badge
 deactivate fe
 
 @enduml
