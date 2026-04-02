@@ -173,7 +173,7 @@ export function TransactionsPage() {
             .toLowerCase()
             .includes(term);
         const matchesType = typeFilter === 'ALL' || t.type === typeFilter;
-        const matchesCategory = categoryFilter === 'ALL' || t.categoryId === categoryFilter;
+        const matchesCategory = categoryFilter === 'ALL' || t.type === 'INCOME' || t.categoryId === categoryFilter;
         return matchesSearch && matchesType && matchesCategory;
       })
       .sort((a, b) => {
@@ -256,7 +256,7 @@ export function TransactionsPage() {
         <div className={`rounded-xl border px-4 py-3 ${summary.net >= 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-amber-50 border-amber-100'}`}>
           <p className={`text-xs font-medium uppercase tracking-wide ${summary.net >= 0 ? 'text-indigo-600' : 'text-amber-600'}`}>Net</p>
           <p className={`text-lg font-bold mt-0.5 ${summary.net >= 0 ? 'text-indigo-700' : 'text-amber-700'}`}>
-            {summary.net >= 0 ? '+' : ''}{formatPrice(Math.abs(summary.net))}
+            {summary.net >= 0 ? '+' : '-'}{formatPrice(Math.abs(summary.net))}
           </p>
         </div>
       </div>
