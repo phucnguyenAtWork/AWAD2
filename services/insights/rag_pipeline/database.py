@@ -60,13 +60,14 @@ def _row_to_log(row: tuple) -> ChatLogRow:
         prompt_tokens=row[8],
         response_tokens=row[9],
         request_id=row[10],
-        timestamp=row[11],
+        feedback=row[11],
+        timestamp=row[12],
     )
 
 
 _SELECT_COLS = (
     "id, account_id, user_query, ai_response, context_snapshot, "
-    "action, model_name, latency_ms, prompt_tokens, response_tokens, request_id, timestamp"
+    "action, model_name, latency_ms, prompt_tokens, response_tokens, request_id, feedback, timestamp"
 )
 
 
@@ -135,6 +136,21 @@ async def get_log(log_id: int) -> ChatLogRow | None:
             )
             row = await cur.fetchone()
             return _row_to_log(row) if row else None
+
+
+async def update_feedback(log_id: int, feedback: int) -> ChatLogRow | None:
+    """Update the feedback score for a chat log entry. feedback: 1 (up) or -1 (down)."""
+    existing = await get_log(log_id)
+    if not existing:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE chat_logs SET feedback = %s WHERE id = %s",
+                (feedback, log_id),
+            )
+            return await get_log(log_id)
 
 
 async def delete_log(log_id: int) -> ChatLogRow | None:

@@ -26,6 +26,7 @@ export type InsightLog = {
   prompt_tokens: number | null;
   response_tokens: number | null;
   request_id: string | null;
+  feedback: number | null; // 1 = thumbs up, -1 = thumbs down, null = no feedback
   timestamp: string | null;
 };
 
@@ -42,5 +43,14 @@ export const insightsService = {
   async listLogs(token: string, accountId: string, limit = 50, options: { onUnauthorized?: () => void } = {}): Promise<InsightLog[]> {
     const query = `?accountId=${encodeURIComponent(accountId)}&limit=${limit}`;
     return request<InsightLog[]>(INSIGHTS_BASE, `/insights/logs${query}`, { token, ...options });
+  },
+
+  async submitFeedback(token: string, logId: number, feedback: 1 | -1 | 0, options: { onUnauthorized?: () => void } = {}): Promise<InsightLog> {
+    return request<InsightLog, { feedback: number }>(INSIGHTS_BASE, `/insights/logs/${logId}/feedback`, {
+      method: 'PATCH',
+      token,
+      body: { feedback },
+      ...options,
+    });
   },
 };

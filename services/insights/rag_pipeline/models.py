@@ -123,6 +123,7 @@ class ChatLogRow(BaseModel):
     prompt_tokens: int | None = None
     response_tokens: int | None = None
     request_id: str | None = None
+    feedback: int | None = None  # 1 = thumbs up, -1 = thumbs down, NULL = no feedback
     timestamp: datetime | None = None
 
 

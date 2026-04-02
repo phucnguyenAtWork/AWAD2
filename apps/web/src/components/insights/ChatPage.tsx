@@ -49,14 +49,27 @@ export function ChatPage() {
     }
   };
 
+  const handleFeedback = async (logId: number, feedback: 1 | -1) => {
+    if (!token) return;
+    try {
+      const currentLog = logs.find((l) => l.id === logId);
+      // Toggle: if already selected, clear it; otherwise set it
+      const newFeedback = currentLog?.feedback === feedback ? 0 : feedback;
+      const updated = await insightsService.submitFeedback(token, logId, newFeedback as 1 | -1 | 0, { onUnauthorized: logout });
+      setLogs((prev) => prev.map((l) => (l.id === logId ? updated : l)));
+    } catch {
+      // silent fail for feedback — non-critical
+    }
+  };
+
   const messages = useMemo(() => {
-    const flattened: { id: string | number; role: 'user' | 'ai'; text: string; timestamp: string | null; latencyMs: number | null }[] = [];
+    const flattened: { id: string | number; logId: number; role: 'user' | 'ai'; text: string; timestamp: string | null; latencyMs: number | null; feedback: number | null }[] = [];
     logs.forEach((log) => {
       if (log.user_query) {
-        flattened.push({ id: `${log.id}-u`, role: 'user', text: log.user_query, timestamp: log.timestamp, latencyMs: null });
+        flattened.push({ id: `${log.id}-u`, logId: log.id, role: 'user', text: log.user_query, timestamp: log.timestamp, latencyMs: null, feedback: null });
       }
       if (log.ai_response) {
-        flattened.push({ id: `${log.id}-ai`, role: 'ai', text: log.ai_response, timestamp: log.timestamp, latencyMs: log.latency_ms });
+        flattened.push({ id: `${log.id}-ai`, logId: log.id, role: 'ai', text: log.ai_response, timestamp: log.timestamp, latencyMs: log.latency_ms, feedback: log.feedback });
       }
     });
     return flattened.sort((a, b) => new Date(a.timestamp ?? 0).getTime() - new Date(b.timestamp ?? 0).getTime());
@@ -112,8 +125,38 @@ export function ChatPage() {
                 {msg.role === 'ai' ? renderAiText(msg.text) : (
                   <div className="whitespace-pre-wrap leading-relaxed">{msg.text}</div>
                 )}
-                {msg.role === 'ai' && msg.latencyMs != null && (
-                  <div className="mt-1.5 text-[10px] text-slate-400">{msg.latencyMs}ms</div>
+                {msg.role === 'ai' && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={() => void handleFeedback(msg.logId, 1)}
+                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] transition-colors ${
+                        msg.feedback === 1
+                          ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                          : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 border border-transparent'
+                      }`}
+                      title="Helpful"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                        <path d="M1 8.25a1.25 1.25 0 112.5 0v7.5a1.25 1.25 0 11-2.5 0v-7.5zM11 3c-1.034 0-1.997.685-2.321 1.682l-.654 2.014H5.25A2.25 2.25 0 003 8.946v5.304A2.25 2.25 0 005.25 16.5h8.637a2.25 2.25 0 002.19-1.742l1.198-5.124A2.25 2.25 0 0015.088 7H12.5V4.5A1.5 1.5 0 0011 3z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => void handleFeedback(msg.logId, -1)}
+                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] transition-colors ${
+                        msg.feedback === -1
+                          ? 'bg-rose-100 text-rose-700 border border-rose-300'
+                          : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent'
+                      }`}
+                      title="Not helpful"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                        <path d="M19 11.75a1.25 1.25 0 10-2.5 0v-7.5a1.25 1.25 0 102.5 0v7.5zM9 17c1.034 0 1.997-.685 2.321-1.682l.654-2.014h2.775A2.25 2.25 0 0017 11.054V5.75A2.25 2.25 0 0014.75 3.5H6.113a2.25 2.25 0 00-2.19 1.742L2.725 10.366A2.25 2.25 0 004.912 13H7.5v2.5A1.5 1.5 0 009 17z" />
+                      </svg>
+                    </button>
+                    {msg.latencyMs != null && (
+                      <span className="text-[10px] text-slate-400 ml-auto">{msg.latencyMs}ms</span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

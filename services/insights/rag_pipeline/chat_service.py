@@ -1,4 +1,4 @@
-"""Main chat orchestrator — ties together context, prompting, model, actions, and logging."""
+"""Main chat orchestrator — ties together classification, context, prompting, model, actions, and logging."""
 
 from __future__ import annotations
 
@@ -10,8 +10,10 @@ from .action_executor import execute_action
 from .action_parser import parse_action, strip_action_blocks
 from .config import settings
 from .context_builder import build_context
-from .models import ChatLogRow, ChatResponse
+from .context_filter import filter_context
+from .models import ChatResponse
 from .prompt_template import build_system_prompt
+from .query_classifier import classify
 
 
 async def chat(
@@ -23,29 +25,69 @@ async def chat(
 ) -> ChatResponse:
     """Full RAG chat pipeline:
 
-    1. Fetch & cache financial context
-    2. Build system prompt with analytics
-    3. Load recent conversation history
-    4. Call Gemini
-    5. Parse & execute any action block
-    6. Log everything
+    1. Classify query intent (NEW — query understanding)
+    2. Apply topic guardrail (NEW — reject off-topic)
+    3. Fetch & cache financial context
+    4. Filter context by intent (NEW — relevant retrieval)
+    5. Build system prompt with analytics
+    6. Load recent conversation history
+    7. Call Gemini
+    8. Parse & execute any action block
+    9. Log everything (including classification metadata)
     """
     request_id = str(uuid.uuid4())
     t0 = time.monotonic()
 
-    # 1. Context retrieval (cached per account)
-    ctx, analytics, db_currency = await build_context(token, user_id)
-    currency = display_currency or db_currency
+    # 1. Query intent classification
+    classification = classify(prompt)
     print(
-        f"[RAG:{request_id[:8]}] Context: {len(ctx.accounts)} accounts, "
-        f"{len(ctx.categories)} categories, {len(ctx.transactions)} transactions, "
-        f"{len(ctx.budgets)} budgets"
+        f"[RAG:{request_id[:8]}] Intent: {classification.intent.value} "
+        f"(confidence: {classification.confidence:.0%}), "
+        f"categories: {classification.extracted_categories}, "
+        f"amount: {classification.extracted_amount}, "
+        f"timeframe: {classification.extracted_timeframe}"
     )
 
-    # 2. System prompt
-    system_prompt = build_system_prompt(ctx, analytics, db_currency, display_currency)
+    # 2. Topic guardrail — block off-topic before calling LLM
+    if classification.is_blocked:
+        print(f"[RAG:{request_id[:8]}] BLOCKED — off-topic or injection attempt")
+        latency_ms = int((time.monotonic() - t0) * 1000)
 
-    # 3. Conversation history
+        saved = await database.create_log(
+            account_id=user_id,
+            user_query=prompt,
+            ai_response=classification.redirect_message,
+            context_snapshot={"blocked": True, "intent": classification.intent.value},
+            action=None,
+            model_name="guardrail",  # No LLM call — handled locally
+            latency_ms=latency_ms,
+            prompt_tokens=0,
+            response_tokens=0,
+            request_id=request_id,
+        )
+
+        return ChatResponse(
+            response=classification.redirect_message or "Please ask a finance-related question.",
+            log=saved,
+            request_id=request_id,
+        )
+
+    # 3. Context retrieval (cached per account)
+    ctx, analytics, db_currency = await build_context(token, user_id)
+    currency = display_currency or db_currency
+
+    # 4. Filter context based on intent (relevant retrieval)
+    filtered_ctx = filter_context(ctx, classification)
+    print(
+        f"[RAG:{request_id[:8]}] Context: {len(ctx.transactions)} total tx → "
+        f"{len(filtered_ctx.transactions)} relevant tx "
+        f"(filtered by {classification.intent.value})"
+    )
+
+    # 5. System prompt
+    system_prompt = build_system_prompt(filtered_ctx, analytics, db_currency, display_currency)
+
+    # 6. Conversation history
     recent_logs = await database.list_logs(user_id, settings.MAX_HISTORY)
     history: list[dict] = []
     for log in reversed(recent_logs):
@@ -55,11 +97,11 @@ async def chat(
             history.append({"role": "model", "parts": [{"text": log.ai_response}]})
     history.append({"role": "user", "parts": [{"text": prompt}]})
 
-    # 4. Call model
+    # 7. Call model
     model_resp = await model_client.chat(system_prompt, history)
     ai_text = model_resp.text
 
-    # 5. Parse and execute action
+    # 8. Parse and execute action
     action_payload = parse_action(ai_text)
     executed_action = None
     if action_payload:
@@ -76,14 +118,22 @@ async def chat(
 
     latency_ms = int((time.monotonic() - t0) * 1000)
 
-    # 6. Log
+    # 9. Log with classification metadata
     context_snapshot = {
         "accountCount": len(ctx.accounts),
         "categoryCount": len(ctx.categories),
         "transactionCount": len(ctx.transactions),
+        "filteredTransactionCount": len(filtered_ctx.transactions),
         "budgetCount": len(ctx.budgets),
         "accounts": [a.name for a in ctx.accounts],
         "categories": [c.name for c in ctx.categories],
+        "classification": {
+            "intent": classification.intent.value,
+            "confidence": classification.confidence,
+            "extracted_categories": classification.extracted_categories,
+            "extracted_amount": classification.extracted_amount,
+            "extracted_timeframe": classification.extracted_timeframe,
+        },
     }
 
     saved = await database.create_log(

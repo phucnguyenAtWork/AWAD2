@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from . import database
 from .auth import extract_raw_token, verify_token
@@ -92,6 +93,24 @@ async def list_logs(
 @app.get("/insights/logs/{log_id}", response_model=ChatLogRow)
 async def get_log(log_id: int, _user_id: str = Depends(verify_token)):
     log = await database.get_log(log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Not found")
+    return log
+
+
+class FeedbackRequest(BaseModel):
+    feedback: int = Field(ge=-1, le=1, description="1 = thumbs up, -1 = thumbs down, 0 = clear")
+
+
+@app.patch("/insights/logs/{log_id}/feedback", response_model=ChatLogRow)
+async def submit_feedback(
+    log_id: int,
+    body: FeedbackRequest,
+    _user_id: str = Depends(verify_token),
+):
+    """Submit user feedback (thumbs up/down) for a chat response."""
+    feedback_val = body.feedback if body.feedback != 0 else None
+    log = await database.update_feedback(log_id, feedback_val)
     if not log:
         raise HTTPException(status_code=404, detail="Not found")
     return log
