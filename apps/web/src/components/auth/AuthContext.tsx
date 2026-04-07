@@ -20,6 +20,7 @@ type AuthContextValue = {
   user: AuthUser | null;
   card: CardInfo | null;
   onboarded: boolean;
+  onboardChecked: boolean;
   isAuthed: boolean;
   login: (payload: LoginPayload) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
@@ -73,14 +74,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<AuthUser | null>(() => parseAuthUser(localStorage.getItem(STORAGE_USER_KEY)));
   const [onboarded, setOnboarded] = useState<boolean>(() => localStorage.getItem(STORAGE_ONBOARDED_KEY) === 'true');
   const [card, setCard] = useState<CardInfo | null>(() => parseCardInfo(localStorage.getItem(STORAGE_CARD_KEY)));
+  const [onboardChecked, setOnboardChecked] = useState(false);
 
   const setSession = useCallback((session: AuthSession) => {
     setToken(session.accessToken);
     setUser(session.user);
-    setOnboarded(false);
+    // Don't reset onboarded here — let syncOnboarding effect determine it
     localStorage.setItem(STORAGE_TOKEN_KEY, session.accessToken);
     localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(session.user));
-    localStorage.setItem(STORAGE_ONBOARDED_KEY, 'false');
   }, []);
 
   const markOnboarded = useCallback((value: boolean) => {
@@ -129,7 +130,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [logout, token]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token) { setOnboardChecked(false); return; }
+    setOnboardChecked(false);
     let cancelled = false;
     const syncOnboarding = async () => {
       try {
@@ -138,9 +140,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const hasAccount = accounts.length > 0;
         markOnboarded(hasAccount);
       } catch (err) {
-        // Keep existing onboarded state; log to console for debugging only
         // eslint-disable-next-line no-console
         console.warn('Onboarding sync failed', err);
+      } finally {
+        if (!cancelled) setOnboardChecked(true);
       }
     };
     void syncOnboarding();
@@ -161,6 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       card,
       onboarded,
+      onboardChecked,
       isAuthed: Boolean(token),
       login,
       register,
@@ -169,7 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       completeOnboarding,
       refreshProfile,
     }),
-    [card, completeOnboarding, login, logout, markOnboarded, onboarded, refreshProfile, register, token, user],
+    [card, completeOnboarding, login, logout, markOnboarded, onboarded, onboardChecked, refreshProfile, register, token, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
