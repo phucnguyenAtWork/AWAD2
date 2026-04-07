@@ -10,6 +10,7 @@ export type AccountInput = {
   name: string;
   type?: Account["type"];
   currency?: Account["currency"];
+  role?: Account["role"];
   frictionLevel?: Account["frictionLevel"];
 };
 
@@ -33,6 +34,7 @@ export const createAccount = async (data: AccountInput) => {
     name: data.name,
     currency: data.currency ?? "VND",
     type: data.type ?? "CASH",
+    role: data.role ?? "Student",
     frictionLevel: data.frictionLevel ?? "LOW",
   };
 
@@ -46,6 +48,7 @@ export const updateAccount = async (id: string, data: Partial<AccountInput>) => 
   if (data.userId !== undefined) payload.userId = data.userId;
   if (data.type !== undefined) payload.type = data.type;
   if (data.currency !== undefined) payload.currency = data.currency;
+  if (data.role !== undefined) payload.role = data.role;
   if (data.frictionLevel !== undefined) payload.frictionLevel = data.frictionLevel;
 
   await db

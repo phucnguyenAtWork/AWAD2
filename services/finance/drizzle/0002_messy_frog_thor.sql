@@ -1,0 +1,2 @@
+ALTER TABLE `transactions` MODIFY COLUMN `essential` boolean;--> statement-breakpoint
+ALTER TABLE `accounts` ADD `role` enum('Student','Worker','Freelancer','Parent','Retiree') DEFAULT 'Student' NOT NULL;

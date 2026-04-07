@@ -5,6 +5,7 @@ import { accountsController } from "./controllers/accounts.controller";
 import { categoriesController } from "./controllers/categories.controller";
 import { transactionsController } from "./controllers/transactions.controller";
 import { budgetsController } from "./controllers/budgets.controller";
+import { finaController, finaChatController } from "./controllers/fina.controller";
 import { closePool } from "./db";
 import { env } from "./env";
 
@@ -33,6 +34,8 @@ export const app = new Elysia()
   .use(categoriesController)
   .use(transactionsController)
   .use(budgetsController)
+  .use(finaController)
+  .use(finaChatController)
   .onStop(() => closePool());
 
 export type FinanceApp = typeof app;

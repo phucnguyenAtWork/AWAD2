@@ -24,11 +24,8 @@ export const transactions = mysqlTable("transactions", {
   categoryId: varchar("category_id", { length: 36 }),
 
   essential: boolean("essential")
-    .default(false)
-    .notNull(),
-
+    .default(false),
   tags: json("tags"),
-
   occurredAt: datetime("occurred_at")
     .default(sql`CURRENT_TIMESTAMP`)
     .notNull(),

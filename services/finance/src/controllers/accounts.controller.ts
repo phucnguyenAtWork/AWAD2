@@ -13,6 +13,13 @@ const accountResponse = t.Object({
     CREDIT: "CREDIT",
   }),
   currency: t.String(),
+  role: t.Enum({
+    Student: "Student",
+    Worker: "Worker",
+    Freelancer: "Freelancer",
+    Parent: "Parent",
+    Retiree: "Retiree",
+  }),
   frictionLevel: t.Enum({
     HIGH: "HIGH",
     MEDIUM: "MEDIUM",
@@ -32,6 +39,15 @@ const accountInput = t.Object({
     ])
   ),
   currency: t.Optional(t.String({ maxLength: 8 })),
+  role: t.Optional(
+    t.Union([
+      t.Literal("Student"),
+      t.Literal("Worker"),
+      t.Literal("Freelancer"),
+      t.Literal("Parent"),
+      t.Literal("Retiree"),
+    ])
+  ),
   frictionLevel: t.Optional(
     t.Union([t.Literal("HIGH"), t.Literal("MEDIUM"), t.Literal("LOW")])
   ),

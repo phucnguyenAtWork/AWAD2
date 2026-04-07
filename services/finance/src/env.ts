@@ -35,6 +35,9 @@ const EnvSchema = z.object({
   JWT_SECRET: z.string().min(24, "JWT_SECRET must be at least 24 chars"),
 
   FRONTEND_ORIGIN: z.string().optional().default(defaults.frontendOrigin),
+
+  // FINA Brain (Windows GPU machine)
+  FINA_API_URL: z.string().default("http://100.126.232.108:8105"),
 });
 
 export type PartialEnv = z.infer<typeof EnvSchema>;
@@ -43,6 +46,7 @@ export const partialEnv: PartialEnv = EnvSchema.parse(process.env);
 export const env = {
   ...partialEnv,
   frontendOrigin: partialEnv.FRONTEND_ORIGIN ?? defaults.frontendOrigin,
+  FINA_API_URL: partialEnv.FINA_API_URL,
   db: {
     host: partialEnv.MYSQL_HOST,
     port: partialEnv.MYSQL_PORT,

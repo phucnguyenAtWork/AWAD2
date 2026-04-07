@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../common/Card';
 import { useAuth } from '../auth/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { insightsService, type InsightLog } from '../../services/insights';
+import { insightsService, type InsightLog, type DashboardData } from '../../services/insights';
 
 export function ChatPage() {
   const { token, user, logout } = useAuth();
@@ -12,6 +12,7 @@ export function ChatPage() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -21,6 +22,15 @@ export function ChatPage() {
       .then(setLogs)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load history'));
   }, [accountId, logout, token]);
+
+  // TODO: re-enable once FINA dashboard response is cached server-side for speed
+  // useEffect(() => {
+  //   if (!token) return;
+  //   void insightsService
+  //     .dashboard(token, { onUnauthorized: logout })
+  //     .then(setDashboard)
+  //     .catch(() => {/* non-critical */});
+  // }, [token, logout]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -53,12 +63,11 @@ export function ChatPage() {
     if (!token) return;
     try {
       const currentLog = logs.find((l) => l.id === logId);
-      // Toggle: if already selected, clear it; otherwise set it
       const newFeedback = currentLog?.feedback === feedback ? 0 : feedback;
       const updated = await insightsService.submitFeedback(token, logId, newFeedback as 1 | -1 | 0, { onUnauthorized: logout });
       setLogs((prev) => prev.map((l) => (l.id === logId ? updated : l)));
     } catch {
-      // silent fail for feedback — non-critical
+      // silent fail for feedback
     }
   };
 
@@ -76,7 +85,6 @@ export function ChatPage() {
   }, [logs]);
 
   const renderAiText = (text: string) => {
-    // Split on action confirmation markers
     const successParts = text.split(/\n\n✅ /);
     const failureParts = (successParts[0] ?? '').split(/\n\n❌ /);
 
@@ -97,110 +105,224 @@ export function ChatPage() {
     );
   };
 
+  const quickPrompts = ['How much can I save?', 'Compare to last month', 'Set a savings goal'];
+
+  const formatAmount = (amount: number, cur: string) => {
+    if (cur === 'VND') return `${amount.toLocaleString('vi-VN')}d`;
+    return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-4 p-4">
-      <Card className="p-4">
-        <h1 className="text-xl font-semibold text-slate-900 mb-1">AI Finance Assistant</h1>
-        <p className="text-sm text-slate-500">
-          Log transactions, create budgets, or ask questions naturally.
-          Try: &quot;I spent 50k on coffee&quot; or &quot;Create a 2M budget for food this month&quot;
-        </p>
-        <p className="text-xs text-slate-400 mt-1">Answers will use your preferred currency: {currency}</p>
-      </Card>
+    <div className="max-w-6xl mx-auto p-4">
+      <p className="text-xs text-slate-400 mb-3">Powered by FINA Brain + Your Transaction History</p>
 
-      {error && <div className="rounded-md bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{error}</div>}
-
-      <Card className="p-0 overflow-hidden">
-        <div className="h-[60vh] overflow-y-auto bg-slate-50 p-4 space-y-4">
-          {messages.length === 0 && !sending && (
-            <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
-              <p className="text-lg font-medium">No conversations yet</p>
-              <p className="text-sm">Start by telling me about a transaction or asking a question</p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* ── Left: Chat panel ── */}
+        <div className="lg:col-span-2 space-y-3">
+          {/* Header card */}
+          <Card className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 text-white">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="font-semibold text-lg">Your AI Financial Advisor</h2>
+                <p className="text-sm text-white/80">I've analyzed your spending patterns.</p>
+              </div>
             </div>
-          )}
-          {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-900 border border-slate-100'}`}>
-                <div className="text-[11px] opacity-70 mb-1 font-medium">{msg.role === 'user' ? 'You' : 'AI Assistant'}</div>
-                {msg.role === 'ai' ? renderAiText(msg.text) : (
-                  <div className="whitespace-pre-wrap leading-relaxed">{msg.text}</div>
-                )}
-                {msg.role === 'ai' && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      onClick={() => void handleFeedback(msg.logId, 1)}
-                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] transition-colors ${
-                        msg.feedback === 1
-                          ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                          : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 border border-transparent'
-                      }`}
-                      title="Helpful"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-                        <path d="M1 8.25a1.25 1.25 0 112.5 0v7.5a1.25 1.25 0 11-2.5 0v-7.5zM11 3c-1.034 0-1.997.685-2.321 1.682l-.654 2.014H5.25A2.25 2.25 0 003 8.946v5.304A2.25 2.25 0 005.25 16.5h8.637a2.25 2.25 0 002.19-1.742l1.198-5.124A2.25 2.25 0 0015.088 7H12.5V4.5A1.5 1.5 0 0011 3z" />
+          </Card>
+
+          {error && <div className="rounded-md bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
+          {/* Chat messages */}
+          <Card className="p-0 overflow-hidden">
+            <div className="h-[50vh] overflow-y-auto bg-slate-50 p-4 space-y-4">
+              {messages.length === 0 && !sending && (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
+                  <p className="text-lg font-medium">No conversations yet</p>
+                  <p className="text-sm">Start by asking about your finances</p>
+                </div>
+              )}
+              {messages.map((msg) => (
+                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} items-end gap-2`}>
+                  {msg.role === 'ai' && (
+                    <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-indigo-600">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
                       </svg>
-                    </button>
-                    <button
-                      onClick={() => void handleFeedback(msg.logId, -1)}
-                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] transition-colors ${
-                        msg.feedback === -1
-                          ? 'bg-rose-100 text-rose-700 border border-rose-300'
-                          : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent'
-                      }`}
-                      title="Not helpful"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-                        <path d="M19 11.75a1.25 1.25 0 10-2.5 0v-7.5a1.25 1.25 0 102.5 0v7.5zM9 17c1.034 0 1.997-.685 2.321-1.682l.654-2.014h2.775A2.25 2.25 0 0017 11.054V5.75A2.25 2.25 0 0014.75 3.5H6.113a2.25 2.25 0 00-2.19 1.742L2.725 10.366A2.25 2.25 0 004.912 13H7.5v2.5A1.5 1.5 0 009 17z" />
-                      </svg>
-                    </button>
-                    {msg.latencyMs != null && (
-                      <span className="text-[10px] text-slate-400 ml-auto">{msg.latencyMs}ms</span>
+                    </div>
+                  )}
+                  <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-900 border border-slate-100'}`}>
+                    {msg.role === 'ai' ? renderAiText(msg.text) : (
+                      <div className="whitespace-pre-wrap leading-relaxed">{msg.text}</div>
+                    )}
+                    {msg.role === 'ai' && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          onClick={() => void handleFeedback(msg.logId, 1)}
+                          className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] transition-colors ${
+                            msg.feedback === 1
+                              ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                              : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 border border-transparent'
+                          }`}
+                          title="Helpful"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                            <path d="M1 8.25a1.25 1.25 0 112.5 0v7.5a1.25 1.25 0 11-2.5 0v-7.5zM11 3c-1.034 0-1.997.685-2.321 1.682l-.654 2.014H5.25A2.25 2.25 0 003 8.946v5.304A2.25 2.25 0 005.25 16.5h8.637a2.25 2.25 0 002.19-1.742l1.198-5.124A2.25 2.25 0 0015.088 7H12.5V4.5A1.5 1.5 0 0011 3z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => void handleFeedback(msg.logId, -1)}
+                          className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] transition-colors ${
+                            msg.feedback === -1
+                              ? 'bg-rose-100 text-rose-700 border border-rose-300'
+                              : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent'
+                          }`}
+                          title="Not helpful"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                            <path d="M19 11.75a1.25 1.25 0 10-2.5 0v-7.5a1.25 1.25 0 102.5 0v7.5zM9 17c1.034 0 1.997-.685 2.321-1.682l.654-2.014h2.775A2.25 2.25 0 0017 11.054V5.75A2.25 2.25 0 0014.75 3.5H6.113a2.25 2.25 0 00-2.19 1.742L2.725 10.366A2.25 2.25 0 004.912 13H7.5v2.5A1.5 1.5 0 009 17z" />
+                          </svg>
+                        </button>
+                        {msg.latencyMs != null && (
+                          <span className="text-[10px] text-slate-400 ml-auto">{msg.latencyMs}ms</span>
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
+                  {msg.role === 'user' && (
+                    <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-slate-500">
+                        <path fillRule="evenodd" d="M7.5 6a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM3.751 20.105a8.25 8.25 0 0116.498 0 .75.75 0 01-.437.695A18.683 18.683 0 0112 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 01-.437-.695z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {sending && (
+                <div className="flex justify-start items-end gap-2">
+                  <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-indigo-600">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                    </svg>
+                  </div>
+                  <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 text-sm shadow-sm">
+                    <div className="flex items-center gap-1.5 text-slate-400">
+                      <span className="w-2 h-2 bg-slate-300 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 bg-slate-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-2 h-2 bg-slate-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={bottomRef} />
+            </div>
+
+            {/* Input area */}
+            <div className="border-t border-slate-200 p-3 space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !sending) {
+                      e.preventDefault();
+                      void handleSend();
+                    }
+                  }}
+                  placeholder="Ask about your finances..."
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                  disabled={sending}
+                />
+                <button
+                  onClick={() => void handleSend()}
+                  disabled={sending || !input.trim()}
+                  className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-semibold disabled:opacity-60 hover:bg-indigo-500 transition-colors"
+                >
+                  {sending ? 'Sending...' : 'Send'}
+                </button>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {quickPrompts.map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setInput(p)}
+                    className="text-xs text-slate-500 border border-slate-200 rounded-full px-3 py-1 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+                  >
+                    {p}
+                  </button>
+                ))}
               </div>
             </div>
-          ))}
-          {sending && (
-            <div className="flex justify-start">
-              <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 text-sm shadow-sm">
-                <div className="text-[11px] opacity-70 mb-1 font-medium">AI Assistant</div>
-                <div className="flex items-center gap-1.5 text-slate-400">
-                  <span className="w-2 h-2 bg-slate-300 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2 h-2 bg-slate-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2 h-2 bg-slate-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </Card>
+        </div>
+
+        {/* ── Right: Smart Insights + AI Predictions ── */}
+        <div className="space-y-4">
+          {/* Smart Insights */}
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-indigo-600">
+                <path fillRule="evenodd" d="M9 4.5a.75.75 0 01.721.544l.813 2.846a3.75 3.75 0 002.576 2.576l2.846.813a.75.75 0 010 1.442l-2.846.813a3.75 3.75 0 00-2.576 2.576l-.813 2.846a.75.75 0 01-1.442 0l-.813-2.846a3.75 3.75 0 00-2.576-2.576l-2.846-.813a.75.75 0 010-1.442l2.846-.813A3.75 3.75 0 007.466 7.89l.813-2.846A.75.75 0 019 4.5z" clipRule="evenodd" />
+              </svg>
+              <h3 className="font-semibold text-slate-900">Smart Insights</h3>
+            </div>
+            {dashboard?.smart_insights && dashboard.smart_insights.length > 0 ? (
+              <div className="space-y-3">
+                {dashboard.smart_insights.map((insight, i) => (
+                  <div key={i} className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
+                    <p className={`text-xs font-semibold mb-0.5 ${
+                      insight.type === 'warning' ? 'text-amber-600' :
+                      insight.type === 'negative' ? 'text-rose-600' :
+                      'text-indigo-600'
+                    }`}>
+                      {insight.title}
+                    </p>
+                    <p className="text-xs text-slate-600 leading-relaxed">{insight.description}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-400 text-center py-4">
+                {dashboard ? 'No insights available yet' : 'Loading insights...'}
+              </div>
+            )}
+          </Card>
+
+          {/* AI Predictions */}
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-indigo-600">
+                <path fillRule="evenodd" d="M2.25 13.5a8.25 8.25 0 018.25-8.25.75.75 0 01.75.75v6.75H18a.75.75 0 01.75.75 8.25 8.25 0 01-16.5 0z" clipRule="evenodd" />
+                <path fillRule="evenodd" d="M12.75 3a.75.75 0 01.75-.75 8.25 8.25 0 018.25 8.25.75.75 0 01-.75.75h-7.5a.75.75 0 01-.75-.75V3z" clipRule="evenodd" />
+              </svg>
+              <h3 className="font-semibold text-slate-900">AI Predictions</h3>
+            </div>
+            {dashboard?.prediction ? (
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Projected Spend</p>
+                <p className="text-2xl font-bold text-slate-900">
+                  {formatAmount(dashboard.prediction.projected_spend, dashboard.prediction.currency)}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">Based on your habits</p>
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <p className="text-xs text-indigo-600 font-medium">
+                    {Math.round(dashboard.prediction.confidence * 100)}% confidence
+                    <span className="text-slate-400 font-normal"> &middot; Updated just now</span>
+                  </p>
                 </div>
               </div>
-            </div>
-          )}
-          <div ref={bottomRef} />
+            ) : (
+              <div className="text-xs text-slate-400 text-center py-4">
+                {dashboard ? 'No predictions available yet' : 'Loading predictions...'}
+              </div>
+            )}
+          </Card>
         </div>
-        <div className="border-t border-slate-200 p-3">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !sending) {
-                  e.preventDefault();
-                  void handleSend();
-                }
-              }}
-              placeholder="e.g. I spent 50k on coffee, or create a budget for food..."
-              className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-              disabled={sending}
-            />
-            <button
-              onClick={() => void handleSend()}
-              disabled={sending || !input.trim()}
-              className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-semibold disabled:opacity-60 hover:bg-indigo-500 transition-colors"
-            >
-              {sending ? 'Sending...' : 'Send'}
-            </button>
-          </div>
-        </div>
-      </Card>
+      </div>
     </div>
   );
 }

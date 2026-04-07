@@ -12,7 +12,7 @@ export function Signup() {
   const { register, isAuthed, token, onboarded, logout, markOnboarded } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState<RegisterPayload>({ fullName: '', phone: '', email: '', password: '' });
-  const [account, setAccount] = useState<AccountPayload>({ name: '', type: 'CASH', currency: 'VND' });
+  const [account, setAccount] = useState<AccountPayload>({ name: '', type: 'CASH', currency: 'VND', role: 'Student' });
   const [step, setStep] = useState<1 | 2>(1);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -166,6 +166,17 @@ export function Signup() {
             >
               <option value="VND">VND</option>
               <option value="USD">USD</option>
+            </select>
+            <select
+              className="w-full rounded-md border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              value={account.role ?? 'Student'}
+              onChange={handleAccountChange('role')}
+            >
+              <option value="Student">Student</option>
+              <option value="Worker">Worker</option>
+              <option value="Freelancer">Freelancer</option>
+              <option value="Parent">Parent</option>
+              <option value="Retiree">Retiree</option>
             </select>
 
             <button

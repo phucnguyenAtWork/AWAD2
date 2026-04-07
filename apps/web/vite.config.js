@@ -17,7 +17,13 @@ export default defineConfig({
 		strictPort: true,
 		open: false,
 		proxy: {
-			// Forward API calls to the gateway during local dev
+			// Forward /api/fina to the finance service
+			'/api/fina': {
+				target: 'http://localhost:4001',
+				changeOrigin: true,
+				secure: false,
+			},
+			// Forward remaining /api calls to the gateway
 			'/api': {
 				target: 'http://localhost:8080',
 				changeOrigin: true,

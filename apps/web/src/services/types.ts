@@ -16,12 +16,15 @@ export type PublicUser = {
   createdAt: string;
 };
 
+export type UserRole = 'Student' | 'Worker' | 'Freelancer' | 'Parent' | 'Retiree';
+
 export type BackendAccount = {
   id: string;
   userId: string;
   name: string;
   type: 'CASH' | 'BANK' | 'WALLET' | 'CREDIT';
   currency: string;
+  role: UserRole;
   frictionLevel: 'HIGH' | 'MEDIUM' | 'LOW';
   createdAt: string;
 };
@@ -65,6 +68,7 @@ export type AccountInput = {
   name: string;
   type?: 'CASH' | 'BANK' | 'WALLET' | 'CREDIT';
   currency?: string;
+  role?: UserRole;
   frictionLevel?: 'HIGH' | 'MEDIUM' | 'LOW';
 };
 
@@ -105,6 +109,7 @@ export type AuthUser = PublicUser;
 
 export interface Account extends Omit<BackendAccount, 'createdAt'> {
   createdAt: string;
+  role: UserRole;
 }
 
 export interface Category extends Omit<BackendCategory, 'createdAt'> {
