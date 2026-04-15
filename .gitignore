@@ -40,6 +40,10 @@ yarn-error.log*
 # Lock files (using bun.lock instead)
 package-lock.json
 
+# Python
+__pycache__/
+*.pyc
+
 # Misc
 .DS_Store
 *.pem
