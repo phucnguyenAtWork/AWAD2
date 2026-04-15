@@ -134,10 +134,10 @@ async function finaFetch<T>(
 
 export const fina = {
   /** AI chat — send user message, get AI reply */
-  chat: (userId: string, role: string, message: string, mode = "Standard") =>
+  chat: (userId: string, role: string, message: string, mode = "Standard", history: { role: string; content: string }[] = []) =>
     finaFetch<ChatResponse>("/chat", {
       method: "POST",
-      body: JSON.stringify({ user_id: userId, role, mode, message }),
+      body: JSON.stringify({ user_id: userId, role, mode, message, history }),
     }),
 
   /** Dashboard insights for a user */

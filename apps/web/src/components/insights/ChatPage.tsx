@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../common/Card';
 import { useAuth } from '../auth/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { insightsService, type InsightLog, type DashboardData } from '../../services/insights';
+import { insightsService, type InsightLog, type DashboardData, type ActionResult, type HistoryMessage } from '../../services/insights';
 
 export function ChatPage() {
   const { token, user, logout } = useAuth();
   const { currency } = useCurrency();
   const accountId = user?.id ?? '';
   const [logs, setLogs] = useState<InsightLog[]>([]);
+  const [actionMap, setActionMap] = useState<Record<number, ActionResult>>({});
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
@@ -45,12 +46,21 @@ export function ChatPage() {
     setSending(true);
     setError('');
     try {
-      const { log } = await insightsService.chat(
+      // Build conversation history from existing messages for multi-turn context
+      const history: HistoryMessage[] = messages.map((msg) => ({
+        role: msg.role === 'user' ? 'user' as const : 'assistant' as const,
+        content: msg.text,
+      }));
+
+      const { log, action } = await insightsService.chat(
         token,
-        { prompt: input.trim(), displayCurrency: currency },
+        { prompt: input.trim(), displayCurrency: currency, history },
         { onUnauthorized: logout },
       );
       setLogs((prev) => [log, ...prev]);
+      if (action) {
+        setActionMap((prev) => ({ ...prev, [log.id]: action }));
+      }
       setInput('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send');
@@ -72,17 +82,18 @@ export function ChatPage() {
   };
 
   const messages = useMemo(() => {
-    const flattened: { id: string | number; logId: number; role: 'user' | 'ai'; text: string; timestamp: string | null; latencyMs: number | null; feedback: number | null }[] = [];
+    const flattened: { id: string | number; logId: number; role: 'user' | 'ai'; text: string; timestamp: string | null; latencyMs: number | null; feedback: number | null; action?: ActionResult }[] = [];
     logs.forEach((log) => {
       if (log.user_query) {
         flattened.push({ id: `${log.id}-u`, logId: log.id, role: 'user', text: log.user_query, timestamp: log.timestamp, latencyMs: null, feedback: null });
       }
       if (log.ai_response) {
-        flattened.push({ id: `${log.id}-ai`, logId: log.id, role: 'ai', text: log.ai_response, timestamp: log.timestamp, latencyMs: log.latency_ms, feedback: log.feedback });
+        const act = actionMap[log.id] ?? (log.action && typeof log.action === 'object' && !Array.isArray(log.action) ? log.action as ActionResult : undefined);
+        flattened.push({ id: `${log.id}-ai`, logId: log.id, role: 'ai', text: log.ai_response, timestamp: log.timestamp, latencyMs: log.latency_ms, feedback: log.feedback, action: act });
       }
     });
     return flattened.sort((a, b) => new Date(a.timestamp ?? 0).getTime() - new Date(b.timestamp ?? 0).getTime());
-  }, [logs]);
+  }, [logs, actionMap]);
 
   const renderAiText = (text: string) => {
     const successParts = text.split(/\n\n✅ /);
@@ -105,7 +116,29 @@ export function ChatPage() {
     );
   };
 
-  const quickPrompts = ['How much can I save?', 'Compare to last month', 'Set a savings goal'];
+  const formatActionMessage = (act: ActionResult): string => {
+    if (!act.success) return `Failed: ${act.error ?? 'Unknown error'}`;
+    const r = act.record ?? {};
+    const fmtAmt = (v: unknown) => v ? `${Number(v).toLocaleString('vi-VN')} VND` : '';
+    switch (act.type) {
+      case 'create_transaction':
+        return `Logged ${(r.type as string) ?? 'EXPENSE'}: ${fmtAmt(r.amount)}${r.categoryName ? ` (${r.categoryName})` : ''}`;
+      case 'create_budget':
+        return `Budget created: ${fmtAmt(r.amountLimit)} ${(r.period as string) ?? 'MONTHLY'}${r.categoryName ? ` for ${r.categoryName}` : ''}`;
+      case 'update_transaction':
+        return `Transaction updated${r.amount ? `: ${fmtAmt(r.amount)}` : ''}`;
+      case 'update_budget':
+        return `Budget updated${r.amountLimit ? `: ${fmtAmt(r.amountLimit)}` : ''}`;
+      case 'delete_transaction':
+        return `Transaction deleted${r.amount ? `: ${fmtAmt(r.amount)}` : ''}`;
+      case 'delete_budget':
+        return `Budget deleted`;
+      default:
+        return 'Action completed';
+    }
+  };
+
+  const quickPrompts = ['Log 50k lunch expense', 'How much can I save?', 'Set budget 5m for food', 'Delete last transaction'];
 
   const formatAmount = (amount: number, cur: string) => {
     if (cur === 'VND') return `${amount.toLocaleString('vi-VN')}d`;
@@ -157,6 +190,18 @@ export function ChatPage() {
                   <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-900 border border-slate-100'}`}>
                     {msg.role === 'ai' ? renderAiText(msg.text) : (
                       <div className="whitespace-pre-wrap leading-relaxed">{msg.text}</div>
+                    )}
+                    {msg.role === 'ai' && msg.action && (
+                      <div
+                        className={`mt-2 rounded-lg px-3 py-2 text-xs font-medium flex items-center gap-2 ${
+                          msg.action.success
+                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                            : 'bg-rose-50 border border-rose-200 text-rose-800'
+                        }`}
+                      >
+                        <span>{msg.action.success ? '\u2713' : '\u2717'}</span>
+                        <span>{formatActionMessage(msg.action)}</span>
+                      </div>
                     )}
                     {msg.role === 'ai' && (
                       <div className="mt-2 flex items-center gap-2">

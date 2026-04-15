@@ -7,8 +7,9 @@ type ProtectedRouteProps = {
 };
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { isAuthed, onboarded } = useAuth();
+  const { isAuthed, onboarded, onboardChecked } = useAuth();
   if (!isAuthed) return <Navigate to="/login" replace />;
-  if (!onboarded) return <Navigate to="/signup" replace />;
+  if (!onboardChecked) return null;
+  if (!onboarded) return <Navigate to="/onboarding" replace />;
   return children;
 }

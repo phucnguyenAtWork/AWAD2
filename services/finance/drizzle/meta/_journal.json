@@ -22,6 +22,20 @@
       "when": 1775195205986,
       "tag": "0002_messy_frog_thor",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1776020597044,
+      "tag": "0003_icy_carnage",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1776110331225,
+      "tag": "0004_youthful_warhawk",
+      "breakpoints": true
     }
   ]
 }

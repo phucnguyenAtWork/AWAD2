@@ -8,6 +8,7 @@ import { Login } from './auth/Login';
 import { Logout } from './auth/Logout';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { Signup } from './auth/Signup';
+import { Onboarding } from './auth/Onboarding';
 import { BudgetPage } from './budget/BudgetPage';
 import { Dashboard } from './dashboard/Dashboard';
 import SettingsPage from './settings/SettingPage';
@@ -28,6 +29,7 @@ export function AppShell() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/logout" element={<Logout />} />
 
         <Route

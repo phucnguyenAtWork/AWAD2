@@ -4,13 +4,27 @@ import type { JsonValue } from './types';
 // On this branch, chat goes through FINA Brain via finance service, not Gemini RAG
 const INSIGHTS_BASE = (import.meta.env.VITE_INSIGHTS_API_URL ?? 'http://localhost:4001').replace(/\/+$/, '');
 
+export type HistoryMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
 export type ChatPayload = {
   prompt: string;
   displayCurrency?: string;
+  history?: HistoryMessage[];
+};
+
+export type ActionResult = {
+  type: string;
+  success: boolean;
+  record?: Record<string, JsonValue>;
+  error?: string;
 };
 
 export type ChatResponse = {
   response: string;
+  action?: ActionResult | null;
   log: InsightLog;
   request_id: string;
 };

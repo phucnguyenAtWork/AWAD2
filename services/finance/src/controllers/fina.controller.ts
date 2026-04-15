@@ -13,7 +13,10 @@ import { accounts } from "../schemas/accounts.schema";
 import { transactions } from "../schemas/transactions.schema";
 import { categories } from "../schemas/categories.schema";
 import { budgets } from "../schemas/budgets.schema";
+import { categoryBudgets } from "../schemas/category-budgets.schema";
+import { budgetPreferences } from "../schemas/budget-preferences.schema";
 import { fina } from "../lib/fina-client";
+import { executeFromPrompt, type ActionResult } from "../lib/action-executor";
 import { authGuardConfig, resolveUserId } from "../middleware/requireAuth";
 import { createPool } from "mysql2/promise";
 import { env } from "../env";
@@ -53,6 +56,44 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
     {
       params: t.Object({ userId: t.String() }),
       detail: { tags: ["FINA Integration"], summary: "Get user profile for FINA" },
+    }
+  )
+
+  // ─── User accounts list ──────────────────────────────────────────
+  .get(
+    "/users/:userId/accounts",
+    async ({ params }) => {
+      const rows = await db
+        .select()
+        .from(accounts)
+        .where(eq(accounts.userId, params.userId));
+
+      return {
+        accounts: rows.map((a) => ({
+          id: a.id,
+          name: a.name,
+          balance: 0, // balance is computed from transactions
+          currency: a.currency,
+          type: a.type,
+        })),
+      };
+    },
+    {
+      params: t.Object({ userId: t.String() }),
+      detail: { tags: ["FINA Integration"], summary: "List user accounts for FINA" },
+    }
+  )
+
+  // ─── User goals ────────────────────────────────────────────────────
+  .get(
+    "/users/:userId/goals",
+    async ({ params: _params }) => {
+      // Goals table not yet implemented — return empty list
+      return { goals: [] };
+    },
+    {
+      params: t.Object({ userId: t.String() }),
+      detail: { tags: ["FINA Integration"], summary: "List user goals for FINA" },
     }
   )
 
@@ -104,33 +145,59 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
   )
 
   // ─── Aggregated summary (income + spending by category) ───────────
+  // Returns pre-computed fields so the LLM doesn't need to do arithmetic
   .get(
     "/users/:userId/summary",
-    async ({ params }) => {
+    async ({ params, query }) => {
       const userId = params.userId;
+      const period = query.period ?? "month";
 
-      // Get user's account for currency
+      // ── Build date range from period ──────────────────────────
+      let startDate: Date | null = null;
+      let endDate: Date | null = null;
+      const now = new Date();
+
+      if (period === "month") {
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      } else if (period === "year") {
+        startDate = new Date(now.getFullYear(), 0, 1);
+        endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+      } else if (/^\d{4}-\d{2}$/.test(period)) {
+        const [y, m] = period.split("-").map(Number) as [number, number];
+        startDate = new Date(y, m - 1, 1);
+        endDate = new Date(y, m, 0, 23, 59, 59, 999);
+      }
+      // period === "all" → no filter
+
+      // Get user's account for currency + role
       const [account] = await db
         .select()
         .from(accounts)
         .where(eq(accounts.userId, userId))
         .limit(1);
       const currency = account?.currency ?? "VND";
+      const accountId = account?.id ?? null;
 
-      // Get all transactions
+      // Build query conditions
+      const conditions = [eq(transactions.userId, userId)];
+      if (startDate) conditions.push(sql`${transactions.occurredAt} >= ${startDate}`);
+      if (endDate) conditions.push(sql`${transactions.occurredAt} <= ${endDate}`);
+
+      // Get filtered transactions
       const allTx = await db
         .select()
         .from(transactions)
-        .where(eq(transactions.userId, userId))
+        .where(and(...conditions))
         .orderBy(desc(transactions.occurredAt));
 
       // Get categories for name lookup
       const allCats = await db.select().from(categories);
       const catMap = new Map(allCats.map((c) => [c.id, c.name]));
 
-      // Compute aggregates
+      // ── Compute aggregates ────────────────────────────────────
       let income = 0;
-      let expense = 0;
+      let totalSpent = 0;
       const spendingByCategory: Record<string, number> = {};
 
       for (const tx of allTx) {
@@ -138,7 +205,7 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
         if (tx.type === "INCOME") {
           income += amount;
         } else {
-          expense += amount;
+          totalSpent += amount;
           const catName = tx.categoryId ? catMap.get(tx.categoryId) ?? "Uncategorized" : "Uncategorized";
           spendingByCategory[catName] = (spendingByCategory[catName] ?? 0) + amount;
         }
@@ -149,7 +216,100 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
         spent,
       }));
 
-      // Recent history (last 50)
+      // ── Needs vs Wants classification ─────────────────────────
+      const NEEDS_CATEGORIES = new Set(["food", "grocery", "bill", "rent", "transport", "healthcare", "insurance"]);
+      let needsTotal = 0;
+      let wantsTotal = 0;
+      for (const [catName, spent] of Object.entries(spendingByCategory)) {
+        if (NEEDS_CATEGORIES.has(catName.toLowerCase())) {
+          needsTotal += spent;
+        } else {
+          wantsTotal += spent;
+        }
+      }
+
+      // ── Top category ──────────────────────────────────────────
+      let topCategory = "None";
+      let topCategorySpent = 0;
+      for (const [catName, spent] of Object.entries(spendingByCategory)) {
+        if (spent > topCategorySpent) {
+          topCategorySpent = spent;
+          topCategory = catName;
+        }
+      }
+      const topCategoryPct = income > 0 ? Math.round((topCategorySpent / income) * 1000) / 10 : 0;
+
+      // ── Budget rule (use user preferences or default 50/30/20) ──
+      const [budgetPref] = await db
+        .select()
+        .from(budgetPreferences)
+        .where(eq(budgetPreferences.userId, userId))
+        .limit(1);
+      const needsPct = (budgetPref?.needsPct ?? 50) / 100;
+      const wantsPct = (budgetPref?.wantsPct ?? 30) / 100;
+      const savingsPct = (budgetPref?.savingsPct ?? 20) / 100;
+      const needsLimit = Math.round(income * needsPct);
+      const wantsLimit = Math.round(income * wantsPct);
+      const savingsTarget = Math.round(income * savingsPct);
+
+      // ── Over-budget categories (exceeding 30% of income) ──────
+      const overBudgetCategories: { category: string; spent: number; pct: number }[] = [];
+      if (income > 0) {
+        for (const [catName, spent] of Object.entries(spendingByCategory)) {
+          const pct = Math.round((spent / income) * 1000) / 10;
+          if (pct > 30) {
+            overBudgetCategories.push({ category: catName, spent, pct });
+          }
+        }
+      }
+
+      // ── Check actual budgets from DB ──────────────────────────
+      let budgetStatus: { categoryName: string; limit: number; spent: number; pct: number }[] = [];
+      if (accountId) {
+        const userBudgets = await db
+          .select()
+          .from(budgets)
+          .where(eq(budgets.accountId, accountId));
+
+        budgetStatus = userBudgets.map((b) => {
+          const catName = b.categoryId ? catMap.get(b.categoryId) ?? "All" : "All";
+          const spent = b.categoryId
+            ? (spendingByCategory[catName] ?? 0)
+            : totalSpent;
+          const limit = Number(b.amountLimit);
+          return {
+            categoryName: catName,
+            limit,
+            spent,
+            pct: limit > 0 ? Math.round((spent / limit) * 1000) / 10 : 0,
+          };
+        });
+      }
+
+      // ── Surplus & savings rate ────────────────────────────────
+      const surplus = income - totalSpent;
+      const savingsRatePct = income > 0 ? Math.round((surplus / income) * 1000) / 10 : 0;
+
+      // ── Per-category budgets ─────────────────────────────────
+      const userCatBudgets = await db
+        .select()
+        .from(categoryBudgets)
+        .where(eq(categoryBudgets.userId, userId));
+
+      const categoryBudgetStatus = userCatBudgets.map((cb) => {
+        const catName = catMap.get(cb.categoryId) ?? "Unknown";
+        const spent = spendingByCategory[catName] ?? 0;
+        const limit = Number(cb.monthlyLimit);
+        return {
+          categoryId: cb.categoryId,
+          categoryName: catName,
+          monthlyLimit: limit,
+          spent,
+          pct: limit > 0 ? Math.round((spent / limit) * 1000) / 10 : 0,
+        };
+      });
+
+      // ── Recent history (last 50) ──────────────────────────────
       const history = allTx.slice(0, 50).map((tx) => ({
         id: tx.id,
         amount: Number(tx.amount),
@@ -158,11 +318,39 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
         category: tx.categoryId ? catMap.get(tx.categoryId) ?? null : null,
       }));
 
-      return { currency, income, spending, history };
+      return {
+        period,
+        currency,
+        income,
+        spending,
+        computed: {
+          total_spent: totalSpent,
+          surplus,
+          savings_rate_pct: savingsRatePct,
+          top_category: topCategory,
+          top_category_spent: topCategorySpent,
+          top_category_pct: topCategoryPct,
+          over_budget_categories: overBudgetCategories,
+          needs_total: needsTotal,
+          wants_total: wantsTotal,
+          budget_50_30_20: {
+            needs_limit: needsLimit,
+            wants_limit: wantsLimit,
+            savings_target: savingsTarget,
+          },
+          budget_status: budgetStatus,
+          category_budget_status: categoryBudgetStatus,
+          has_category_budgets: userCatBudgets.length > 0,
+        },
+        history,
+      };
     },
     {
       params: t.Object({ userId: t.String() }),
-      detail: { tags: ["FINA Integration"], summary: "Get financial summary for FINA" },
+      query: t.Object({
+        period: t.Optional(t.String()),
+      }),
+      detail: { tags: ["FINA Integration"], summary: "Get financial summary for FINA (supports ?period=month|year|all|YYYY-MM)" },
     }
   )
 
@@ -195,6 +383,93 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
     {
       params: t.Object({ userId: t.String() }),
       detail: { tags: ["FINA Integration"], summary: "Daily spending for LSTM training" },
+    }
+  )
+
+  // ─── Monthly spending history (per-category, by month) ──────────────
+  .get(
+    "/users/:userId/spending/monthly-history",
+    async ({ params, query }) => {
+      const monthsBack = query.months ?? 3;
+      const userId = params.userId;
+
+      // Category lookup
+      const allCats = await db.select().from(categories);
+      const catMap = new Map(allCats.map((c) => [c.id, c.name]));
+
+      // Date boundaries: start of (now - N months) up to start of current month
+      const now = new Date();
+      const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startDate = new Date(now.getFullYear(), now.getMonth() - monthsBack, 1);
+
+      const expenseTx = await db
+        .select()
+        .from(transactions)
+        .where(
+          and(
+            eq(transactions.userId, userId),
+            eq(transactions.type, "EXPENSE"),
+            sql`${transactions.occurredAt} >= ${startDate}`,
+            sql`${transactions.occurredAt} < ${startOfCurrentMonth}`
+          )
+        )
+        .orderBy(desc(transactions.occurredAt));
+
+      // ── Build months map ────────────────────────────────────────
+      const months: Record<string, Record<string, number>> = {};
+      // ── Build recurring detection map ───────────────────────────
+      const recurringMap = new Map<
+        string, // "description|category"
+        { description: string; category: string; amounts: number[]; monthSet: Set<string> }
+      >();
+
+      for (const tx of expenseTx) {
+        const month = tx.occurredAt.toISOString().slice(0, 7); // "YYYY-MM"
+        const catName = tx.categoryId ? catMap.get(tx.categoryId) ?? "Uncategorized" : "Uncategorized";
+        const amount = Number(tx.amount);
+
+        // Per-category monthly totals
+        if (!months[month]) months[month] = {};
+        months[month][catName] = (months[month][catName] ?? 0) + amount;
+
+        // Recurring detection
+        const desc = (tx.description ?? "").trim();
+        if (desc) {
+          const key = `${desc.toLowerCase()}|${catName.toLowerCase()}`;
+          if (!recurringMap.has(key)) {
+            recurringMap.set(key, { description: desc, category: catName, amounts: [], monthSet: new Set() });
+          }
+          const entry = recurringMap.get(key)!;
+          entry.amounts.push(amount);
+          entry.monthSet.add(month);
+        }
+      }
+
+      // ── Filter recurring: 2+ distinct months, max/min amount within 20% ──
+      const recurring: { description: string; category: string; amount: number; occurrences: number }[] = [];
+      for (const entry of recurringMap.values()) {
+        if (entry.monthSet.size < 2) continue;
+        const minAmt = Math.min(...entry.amounts);
+        const maxAmt = Math.max(...entry.amounts);
+        if (minAmt > 0 && maxAmt / minAmt > 1.2) continue;
+        const avg = Math.round(entry.amounts.reduce((s, a) => s + a, 0) / entry.amounts.length);
+        recurring.push({
+          description: entry.description,
+          category: entry.category,
+          amount: avg,
+          occurrences: entry.monthSet.size,
+        });
+      }
+      recurring.sort((a, b) => b.amount - a.amount);
+
+      return { months, recurring };
+    },
+    {
+      params: t.Object({ userId: t.String() }),
+      query: t.Object({
+        months: t.Optional(t.Number({ minimum: 1, maximum: 24 })),
+      }),
+      detail: { tags: ["FINA Integration"], summary: "Monthly spending history with recurring detection" },
     }
   )
 
@@ -299,6 +574,144 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
     }
   )
 
+  // ─── Budget preferences (needs/wants/savings split) ──────────────────
+  .get(
+    "/users/:userId/budget-preferences",
+    async ({ params }) => {
+      const [row] = await db
+        .select()
+        .from(budgetPreferences)
+        .where(eq(budgetPreferences.userId, params.userId))
+        .limit(1);
+
+      if (!row) return null;
+
+      return {
+        needs_pct: row.needsPct,
+        wants_pct: row.wantsPct,
+        savings_pct: row.savingsPct,
+      };
+    },
+    {
+      params: t.Object({ userId: t.String() }),
+      detail: { tags: ["FINA Integration"], summary: "Get budget preferences (needs/wants/savings split)" },
+    }
+  )
+
+  // ─── Budget preferences: POST (upsert) ─────────────────────────────
+  .post(
+    "/users/:userId/budget-preferences",
+    async ({ params, body }) => {
+      const userId = params.userId;
+
+      await db
+        .insert(budgetPreferences)
+        .values({
+          id: crypto.randomUUID(),
+          userId,
+          needsPct: body.needs_pct,
+          wantsPct: body.wants_pct,
+          savingsPct: body.savings_pct,
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            needsPct: body.needs_pct,
+            wantsPct: body.wants_pct,
+            savingsPct: body.savings_pct,
+            updatedAt: new Date(),
+          },
+        });
+
+      return {
+        success: true,
+        needs_pct: body.needs_pct,
+        wants_pct: body.wants_pct,
+        savings_pct: body.savings_pct,
+      };
+    },
+    {
+      params: t.Object({ userId: t.String() }),
+      body: t.Object({
+        needs_pct: t.Number({ minimum: 0, maximum: 100 }),
+        wants_pct: t.Number({ minimum: 0, maximum: 100 }),
+        savings_pct: t.Number({ minimum: 0, maximum: 100 }),
+      }),
+      detail: { tags: ["FINA Integration"], summary: "Create/update budget preferences" },
+    }
+  )
+
+  // ─── Per-category budgets: GET ──────────────────────────────────────
+  .get(
+    "/users/:userId/category-budgets",
+    async ({ params }) => {
+      const rows = await db
+        .select({
+          id: categoryBudgets.id,
+          categoryId: categoryBudgets.categoryId,
+          monthlyLimit: categoryBudgets.monthlyLimit,
+        })
+        .from(categoryBudgets)
+        .where(eq(categoryBudgets.userId, params.userId));
+
+      // Join category names
+      const catIds = rows.map((r) => r.categoryId).filter(Boolean) as string[];
+      const catRows = catIds.length
+        ? await db.select().from(categories).where(sql`${categories.id} IN (${sql.join(catIds.map(id => sql`${id}`), sql`, `)})`)
+        : [];
+      const catMap = new Map(catRows.map((c) => [c.id, c.name]));
+
+      return {
+        budgets: rows.map((r) => ({
+          categoryId: r.categoryId,
+          categoryName: catMap.get(r.categoryId) ?? null,
+          monthlyLimit: Number(r.monthlyLimit),
+        })),
+      };
+    },
+    {
+      params: t.Object({ userId: t.String() }),
+      detail: { tags: ["FINA Integration"], summary: "Get per-category budgets for user" },
+    }
+  )
+
+  // ─── Per-category budgets: POST (upsert) ────────────────────────────
+  .post(
+    "/users/:userId/category-budgets",
+    async ({ params, body }) => {
+      const userId = params.userId;
+      const results: { categoryId: string; monthlyLimit: number }[] = [];
+
+      for (const item of body.budgets) {
+        await db
+          .insert(categoryBudgets)
+          .values({
+            id: crypto.randomUUID(),
+            userId,
+            categoryId: item.categoryId,
+            monthlyLimit: String(item.monthlyLimit),
+          })
+          .onDuplicateKeyUpdate({
+            set: { monthlyLimit: String(item.monthlyLimit), updatedAt: new Date() },
+          });
+        results.push({ categoryId: item.categoryId, monthlyLimit: item.monthlyLimit });
+      }
+
+      return { success: true, budgets: results };
+    },
+    {
+      params: t.Object({ userId: t.String() }),
+      body: t.Object({
+        budgets: t.Array(
+          t.Object({
+            categoryId: t.String(),
+            monthlyLimit: t.Number({ minimum: 0 }),
+          })
+        ),
+      }),
+      detail: { tags: ["FINA Integration"], summary: "Create/update per-category budgets" },
+    }
+  )
+
   ;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -329,15 +742,25 @@ export const finaChatController = new Elysia({ prefix: "/api/fina" })
         role = account?.role ?? "Student";
       } catch (dbErr) {
         console.error(`[FINA Chat] DB error fetching account:`, dbErr);
-        // Continue with default role
       }
 
       try {
-        const finaResp = await fina.chat(userId, role, body.prompt);
+        const finaResp = await fina.chat(userId, role, body.prompt, "Standard", body.history ?? []);
         const latencyMs = Math.round(performance.now() - t0);
         const replyText = finaResp.response ?? "";
 
-        // Log to insights DB (same chat_logs table)
+        // ── Execute action based on user prompt ─────────────────────
+        let actionResult: ActionResult | null = null;
+        try {
+          actionResult = await executeFromPrompt(body.prompt, userId);
+          if (actionResult) {
+            console.log(`[FINA Chat] Action executed:`, JSON.stringify(actionResult));
+          }
+        } catch (actionErr) {
+          console.error(`[FINA Chat] Action execution error:`, actionErr);
+        }
+
+        // ── Log to insights DB ──────────────────────────────────────
         let logRow;
         try {
           logRow = await insertChatLog({
@@ -347,19 +770,21 @@ export const finaChatController = new Elysia({ prefix: "/api/fina" })
             modelName: "fina-brain",
             latencyMs,
             contextSnapshot: { source: "fina", intent: finaResp.intent ?? null },
+            action: actionResult ?? undefined,
           });
         } catch (logErr) {
           console.error(`[FINA Chat] Log insert error:`, logErr);
-          // Return response even if logging fails
           return {
             response: replyText,
-            log: { id: 0, account_id: userId, user_query: body.prompt, ai_response: replyText, context_snapshot: null, action: null, model_name: "fina-brain", latency_ms: latencyMs, prompt_tokens: null, response_tokens: null, request_id: crypto.randomUUID(), feedback: null, timestamp: new Date().toISOString() },
+            action: actionResult,
+            log: { id: 0, account_id: userId, user_query: body.prompt, ai_response: replyText, context_snapshot: null, action: actionResult, model_name: "fina-brain", latency_ms: latencyMs, prompt_tokens: null, response_tokens: null, request_id: crypto.randomUUID(), feedback: null, timestamp: new Date().toISOString() },
             request_id: crypto.randomUUID(),
           };
         }
 
         return {
           response: replyText,
+          action: actionResult,
           log: logRow,
           request_id: logRow.request_id,
         };
@@ -374,6 +799,10 @@ export const finaChatController = new Elysia({ prefix: "/api/fina" })
       body: t.Object({
         prompt: t.String({ minLength: 1 }),
         displayCurrency: t.Optional(t.String()),
+        history: t.Optional(t.Array(t.Object({
+          role: t.String(),
+          content: t.String(),
+        }))),
       }),
       detail: { tags: ["FINA Chat"], summary: "Chat via FINA Brain (proxied)" },
     }
