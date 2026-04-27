@@ -11,7 +11,7 @@ import { categories } from "../schemas/categories.schema";
 import { accounts } from "../schemas/accounts.schema";
 import { transactions } from "../schemas/transactions.schema";
 import { budgets } from "../schemas/budgets.schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, isNull } from "drizzle-orm";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -131,14 +131,48 @@ function parseAmount(text: string): number | null {
 
 // ─── Category detection ─────────────────────────────────────────────
 
+// Keywords are scanned in insertion order; the first match wins.
+// Keep multi-word/more-specific phrases ABOVE single words that could be a prefix
+// (e.g. "gym membership" -> Bill must come before a bare "gym" rule).
 const CATEGORY_MAP: Record<string, string> = {
-  food: "Food", lunch: "Food", dinner: "Food", breakfast: "Food", meal: "Food",
-  "ăn": "Food", "cơm": "Food", "bún": "Food", "phở": "Food", "cafe": "Food", coffee: "Food",
-  shopping: "Shopping", clothes: "Shopping", clothing: "Shopping", "quần áo": "Shopping", "mua sắm": "Shopping", shoes: "Shopping",
-  grocery: "Grocery", groceries: "Grocery", "siêu thị": "Grocery", supermarket: "Grocery",
-  bill: "Bill", electricity: "Bill", water: "Bill", internet: "Bill", rent: "Bill", phone: "Bill",
-  "điện": "Bill", "nước": "Bill", "tiền nhà": "Bill",
-  transport: "Other", taxi: "Other", grab: "Other", fuel: "Other", gas: "Other", uber: "Other",
+  // ── Food (eating out, drinks, snacks) ──
+  food: "Food", lunch: "Food", dinner: "Food", breakfast: "Food", meal: "Food", snack: "Food",
+  drink: "Food", beer: "Food", tea: "Food",
+  "ăn": "Food", "cơm": "Food", "bún": "Food", "phở": "Food", "mì": "Food", "xôi": "Food", "chè": "Food",
+  cafe: "Food", coffee: "Food", "cà phê": "Food", "trà sữa": "Food", "bia": "Food", "nước ngọt": "Food",
+
+  // ── Grocery (ingredients, household staples) ──
+  grocery: "Grocery", groceries: "Grocery", supermarket: "Grocery",
+  vegetable: "Grocery", vegetables: "Grocery", fruit: "Grocery", fruits: "Grocery",
+  meat: "Grocery", milk: "Grocery", egg: "Grocery", eggs: "Grocery", rice: "Grocery",
+  "siêu thị": "Grocery", "rau": "Grocery", "trái cây": "Grocery", "thịt": "Grocery",
+  "sữa": "Grocery", "trứng": "Grocery", "gạo": "Grocery",
+
+  // ── Bill (recurring / utilities / subscriptions — must be BEFORE generic Shopping words) ──
+  "phone bill": "Bill", "gym membership": "Bill",
+  bill: "Bill", electricity: "Bill", water: "Bill", internet: "Bill", rent: "Bill",
+  subscription: "Bill", netflix: "Bill", spotify: "Bill", youtube: "Bill",
+  insurance: "Bill", tuition: "Bill",
+  phone: "Bill", // legacy: "phone" tends to mean phone bill in VN finance context
+  "điện": "Bill", "nước": "Bill", "tiền nhà": "Bill", "bảo hiểm": "Bill", "học phí": "Bill",
+
+  // ── Shopping (one-off purchases of goods) ──
+  shopping: "Shopping", clothes: "Shopping", clothing: "Shopping", shoes: "Shopping",
+  skincare: "Shopping", cosmetics: "Shopping", cosmetic: "Shopping", makeup: "Shopping",
+  beauty: "Shopping", lotion: "Shopping", serum: "Shopping", perfume: "Shopping",
+  book: "Shopping", books: "Shopping",
+  laptop: "Shopping", iphone: "Shopping", android: "Shopping", smartphone: "Shopping",
+  electronics: "Shopping", gadget: "Shopping", headphone: "Shopping", earphone: "Shopping",
+  handbag: "Shopping", wallet: "Shopping", watch: "Shopping",
+  "quần áo": "Shopping", "mua sắm": "Shopping", "giày": "Shopping",
+  "mỹ phẩm": "Shopping", "son": "Shopping", "kem dưỡng": "Shopping",
+  "sách": "Shopping", "túi xách": "Shopping", "ví": "Shopping", "đồng hồ": "Shopping",
+  "máy tính": "Shopping", "điện thoại": "Shopping", "đồ điện tử": "Shopping",
+
+  // ── Transport (maps to "Other" — no Transport category is seeded yet, so these
+  //     still land as Uncategorized until you add one to categories.repository.ts).
+  transport: "Other", taxi: "Other", grab: "Other", uber: "Other",
+  fuel: "Other", gas: "Other", "xăng": "Other",
 };
 
 function detectCategory(text: string): string | null {
@@ -338,15 +372,38 @@ export async function executeFromPrompt(
         const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
         const period = /\bweekly\b|tuần/i.test(userPrompt) ? "WEEKLY" : "MONTHLY";
 
-        const record = await BudgetsService.create({
-          accountId,
-          categoryId,
-          amountLimit: amount,
-          period,
-          alertThreshold: 0.8,
-          startDate: now.toISOString().split("T")[0]!,
-          endDate: endOfMonth.toISOString().split("T")[0]!,
-        });
+        const [existingBudget] = await db
+          .select()
+          .from(budgets)
+          .where(
+            and(
+              eq(budgets.accountId, accountId),
+              categoryId ? eq(budgets.categoryId, categoryId) : isNull(budgets.categoryId),
+              eq(budgets.period, period)
+            )
+          )
+          .limit(1);
+
+        const record = existingBudget
+          ? await BudgetsService.update(existingBudget.id, {
+              amountLimit: amount,
+              alertThreshold: 0.8,
+              startDate: now.toISOString().split("T")[0]!,
+              endDate: endOfMonth.toISOString().split("T")[0]!,
+            })
+          : await BudgetsService.create({
+              accountId,
+              categoryId,
+              amountLimit: amount,
+              period,
+              alertThreshold: 0.8,
+              startDate: now.toISOString().split("T")[0]!,
+              endDate: endOfMonth.toISOString().split("T")[0]!,
+            });
+
+        if (!record) {
+          return { type: "create_budget", success: false, error: "Budget could not be saved" };
+        }
 
         return {
           type: "create_budget",
@@ -453,6 +510,199 @@ export async function executeFromPrompt(
           type: "delete_budget",
           success: true,
           record: { id: lastBudget.id, amountLimit: lastBudget.amountLimit },
+        };
+      }
+
+      default:
+        return null;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    return { type: intent, success: false, error: msg };
+  }
+}
+
+// ─── Execute from a structured FINA action ──────────────────────────
+// FINA emits actions as { type, arguments }. The model has full conversation
+// history, so this path handles follow-up turns ("food, 3.6m") that
+// executeFromPrompt's single-turn regex misses.
+
+const ACTION_TYPE_MAP: Record<string, ActionIntent> = {
+  LOG_EXPENSE: "create_transaction",
+  LOG_INCOME: "create_transaction",
+  UPDATE_TRANSACTION: "update_transaction",
+  DELETE_TRANSACTION: "delete_transaction",
+  create_transaction: "create_transaction",
+  update_transaction: "update_transaction",
+  delete_transaction: "delete_transaction",
+  create_budget: "create_budget",
+  update_budget: "update_budget",
+  delete_budget: "delete_budget",
+};
+
+export async function executeFromAction(
+  action: { type?: string; arguments?: Record<string, unknown> },
+  userId: string
+): Promise<ActionResult | null> {
+  const rawType = typeof action?.type === "string" ? action.type : "";
+  const intent = ACTION_TYPE_MAP[rawType] ?? null;
+  if (!intent) return null;
+
+  const args = (action.arguments ?? {}) as Record<string, unknown>;
+  const accountId = await getUserAccountId(userId);
+  const amount = typeof args.amount === "number" ? args.amount : null;
+  const categoryName = typeof args.category === "string" && args.category ? args.category : null;
+  const item = typeof args.item === "string" && args.item ? args.item : null;
+
+  try {
+    switch (intent) {
+      case "create_transaction": {
+        if (!amount) return { type: "create_transaction", success: false, error: "amount required" };
+        const txType = rawType === "LOG_INCOME" ? "INCOME" : "EXPENSE";
+        const categoryId = categoryName ? await resolveCategoryId(categoryName, accountId) : null;
+        const record = await TransactionsService.create({
+          userId,
+          type: txType,
+          amount,
+          currency: "VND",
+          description: item ?? categoryName ?? "Transaction",
+          categoryId,
+          essential: false,
+          tags: null,
+          occurredAt: new Date().toISOString(),
+        });
+        return {
+          type: "create_transaction",
+          success: true,
+          record: {
+            id: record.id, type: record.type, amount: record.amount,
+            currency: record.currency, description: record.description,
+            categoryId: record.categoryId, categoryName: categoryName ?? "Other",
+            occurredAt: record.occurredAt,
+          },
+        };
+      }
+
+      case "create_budget": {
+        if (!accountId) return { type: "create_budget", success: false, error: "No account found" };
+        if (!amount) return { type: "create_budget", success: false, error: "amount required" };
+        const categoryId = categoryName ? await resolveCategoryId(categoryName, accountId) : null;
+        const period = (typeof args.period === "string" && /^(MONTHLY|WEEKLY)$/.test(args.period))
+          ? (args.period as "MONTHLY" | "WEEKLY")
+          : "MONTHLY";
+        const alertThreshold = typeof args.alert_threshold === "number" ? args.alert_threshold : 0.8;
+        const now = new Date();
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+        const [existingBudget] = await db
+          .select()
+          .from(budgets)
+          .where(
+            and(
+              eq(budgets.accountId, accountId),
+              categoryId ? eq(budgets.categoryId, categoryId) : isNull(budgets.categoryId),
+              eq(budgets.period, period)
+            )
+          )
+          .limit(1);
+
+        const record = existingBudget
+          ? await BudgetsService.update(existingBudget.id, {
+              amountLimit: amount,
+              alertThreshold,
+              startDate: now.toISOString().split("T")[0]!,
+              endDate: endOfMonth.toISOString().split("T")[0]!,
+            })
+          : await BudgetsService.create({
+              accountId, categoryId, amountLimit: amount, period, alertThreshold,
+              startDate: now.toISOString().split("T")[0]!,
+              endDate: endOfMonth.toISOString().split("T")[0]!,
+            });
+
+        if (!record) return { type: "create_budget", success: false, error: "Budget could not be saved" };
+        return {
+          type: "create_budget",
+          success: true,
+          record: {
+            id: record.id, amountLimit: record.amountLimit, period: record.period,
+            categoryName: categoryName ?? "All",
+            startDate: record.startDate, endDate: record.endDate,
+          },
+        };
+      }
+
+      case "update_transaction": {
+        const ref = typeof args.transaction_ref === "string" ? args.transaction_ref : null;
+        const target = ref
+          ? (await db.select().from(transactions).where(eq(transactions.id, ref)).limit(1))[0]
+          : await getLastTransaction(userId);
+        if (!target) return { type: "update_transaction", success: false, error: "No transaction found to update" };
+
+        const updates: Record<string, unknown> = {};
+        if (amount) updates.amount = amount;
+        if (categoryName && accountId) {
+          const catId = await resolveCategoryId(categoryName, accountId);
+          if (catId) updates.categoryId = catId;
+        }
+        if (item) updates.description = item;
+        if (Object.keys(updates).length === 0) {
+          return { type: "update_transaction", success: false, error: "No fields to update" };
+        }
+        const record = await TransactionsService.update(target.id, updates as any);
+        return {
+          type: "update_transaction",
+          success: true,
+          record: { id: record?.id, type: record?.type, amount: record?.amount, description: record?.description },
+        };
+      }
+
+      case "update_budget": {
+        const ref = typeof args.budget_ref === "string" ? args.budget_ref : null;
+        const target = ref
+          ? (await db.select().from(budgets).where(eq(budgets.id, ref)).limit(1))[0]
+          : await getLastBudget(userId);
+        if (!target) return { type: "update_budget", success: false, error: "No budget found to update" };
+
+        const updates: Record<string, unknown> = {};
+        if (amount) updates.amountLimit = amount;
+        if (typeof args.period === "string" && /^(MONTHLY|WEEKLY)$/.test(args.period)) updates.period = args.period;
+        if (typeof args.alert_threshold === "number") updates.alertThreshold = args.alert_threshold;
+        if (Object.keys(updates).length === 0) {
+          return { type: "update_budget", success: false, error: "No fields to update" };
+        }
+        const record = await BudgetsService.update(target.id, updates as any);
+        return {
+          type: "update_budget",
+          success: true,
+          record: { id: record?.id, amountLimit: record?.amountLimit, period: record?.period },
+        };
+      }
+
+      case "delete_transaction": {
+        const ref = typeof args.transaction_ref === "string" ? args.transaction_ref : null;
+        const target = ref
+          ? (await db.select().from(transactions).where(eq(transactions.id, ref)).limit(1))[0]
+          : await getLastTransaction(userId);
+        if (!target) return { type: "delete_transaction", success: false, error: "No transaction found to delete" };
+        await TransactionsService.delete(target.id);
+        return {
+          type: "delete_transaction",
+          success: true,
+          record: { id: target.id, type: target.type, amount: target.amount, description: target.description },
+        };
+      }
+
+      case "delete_budget": {
+        const ref = typeof args.budget_ref === "string" ? args.budget_ref : null;
+        const target = ref
+          ? (await db.select().from(budgets).where(eq(budgets.id, ref)).limit(1))[0]
+          : await getLastBudget(userId);
+        if (!target) return { type: "delete_budget", success: false, error: "No budget found to delete" };
+        await BudgetsService.delete(target.id);
+        return {
+          type: "delete_budget",
+          success: true,
+          record: { id: target.id, amountLimit: target.amountLimit },
         };
       }
 

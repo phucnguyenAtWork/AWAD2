@@ -10,6 +10,7 @@
 import { env } from "../env";
 
 const FINA_URL = env.FINA_API_URL;
+const RETRY_DELAYS_MS = [750, 1_500];
 const TIMEOUT_MS = 60_000; // 60s — LLM inference on FINA can take 10-30s
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -23,6 +24,13 @@ export type ChatRequest = {
 
 export type ChatResponse = {
   response: string;
+  model_output?: {
+    kind?: string;
+    message?: string;
+    action?: unknown;
+    signals?: string[];
+    needs_clarification?: boolean;
+  };
   intent?: string;
   actions?: unknown[];
   [key: string]: unknown;
@@ -95,39 +103,51 @@ async function finaFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  let lastError: unknown;
 
-  try {
-    const res = await fetch(`${FINA_URL}${path}`, {
-      ...options,
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-    });
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-    const data = await res.json();
+    try {
+      const res = await fetch(`${FINA_URL}${path}`, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
+      });
 
-    if (!res.ok) {
-      throw new FinaError(
-        res.status,
-        typeof data?.detail === "string" ? data.detail : res.statusText,
-        data
-      );
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new FinaError(
+          res.status,
+          typeof data?.detail === "string" ? data.detail : res.statusText,
+          data
+        );
+      }
+
+      return data as T;
+    } catch (err) {
+      lastError = err;
+      if (err instanceof FinaError) throw err;
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new FinaError(408, "FINA request timed out");
+      }
+
+      const delay = RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) break;
+      console.warn(`[FINA] transient fetch failure for ${path}; retrying in ${delay}ms`, err);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    } finally {
+      clearTimeout(timeout);
     }
-
-    return data as T;
-  } catch (err) {
-    if (err instanceof FinaError) throw err;
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new FinaError(408, "FINA request timed out");
-    }
-    throw new FinaError(503, `FINA unreachable: ${(err as Error).message}`);
-  } finally {
-    clearTimeout(timeout);
   }
+
+  const err = lastError as Error;
+  throw new FinaError(503, `FINA unreachable: ${err?.message ?? "connection failed"}`);
 }
 
 // ─── Public API ─────────────────────────────────────────────────────

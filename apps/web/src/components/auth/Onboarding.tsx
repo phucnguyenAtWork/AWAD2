@@ -5,7 +5,7 @@ import { useAuth } from './AuthContext';
 import { financeService } from '../../services/finance';
 import type { AccountPayload, UserRole } from '../../services/types';
 
-const ROLES: UserRole[] = ['Student', 'Worker', 'Freelancer', 'Parent', 'Retiree'];
+const ROLES: UserRole[] = ['Student', 'Worker', 'Freelancer'];
 
 export function Onboarding() {
   const { isAuthed, onboarded, onboardChecked, token, logout, markOnboarded } = useAuth();

@@ -13,10 +13,9 @@ import { accounts } from "../schemas/accounts.schema";
 import { transactions } from "../schemas/transactions.schema";
 import { categories } from "../schemas/categories.schema";
 import { budgets } from "../schemas/budgets.schema";
-import { categoryBudgets } from "../schemas/category-budgets.schema";
 import { budgetPreferences } from "../schemas/budget-preferences.schema";
 import { fina } from "../lib/fina-client";
-import { executeFromPrompt, type ActionResult } from "../lib/action-executor";
+import { executeFromPrompt, executeFromAction, type ActionResult } from "../lib/action-executor";
 import { authGuardConfig, resolveUserId } from "../middleware/requireAuth";
 import { createPool } from "mysql2/promise";
 import { env } from "../env";
@@ -171,13 +170,12 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
       // period === "all" → no filter
 
       // Get user's account for currency + role
-      const [account] = await db
+      const userAccounts = await db
         .select()
         .from(accounts)
-        .where(eq(accounts.userId, userId))
-        .limit(1);
-      const currency = account?.currency ?? "VND";
-      const accountId = account?.id ?? null;
+        .where(eq(accounts.userId, userId));
+      const currency = userAccounts[0]?.currency ?? "VND";
+      const accountIds = userAccounts.map((account) => account.id);
 
       // Build query conditions
       const conditions = [eq(transactions.userId, userId)];
@@ -265,11 +263,18 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
 
       // ── Check actual budgets from DB ──────────────────────────
       let budgetStatus: { categoryName: string; limit: number; spent: number; pct: number }[] = [];
-      if (accountId) {
+      let categoryBudgetStatus: {
+        categoryId: string;
+        categoryName: string;
+        monthlyLimit: number;
+        spent: number;
+        pct: number;
+      }[] = [];
+      if (accountIds.length > 0) {
         const userBudgets = await db
           .select()
           .from(budgets)
-          .where(eq(budgets.accountId, accountId));
+          .where(sql`${budgets.accountId} IN (${sql.join(accountIds.map(id => sql`${id}`), sql`, `)})`);
 
         budgetStatus = userBudgets.map((b) => {
           const catName = b.categoryId ? catMap.get(b.categoryId) ?? "All" : "All";
@@ -284,30 +289,27 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
             pct: limit > 0 ? Math.round((spent / limit) * 1000) / 10 : 0,
           };
         });
+
+        categoryBudgetStatus = userBudgets
+          .filter((b) => Boolean(b.categoryId))
+          .map((b) => {
+            const categoryId = b.categoryId as string;
+            const catName = catMap.get(categoryId) ?? "Unknown";
+            const spent = spendingByCategory[catName] ?? 0;
+            const limit = Number(b.amountLimit);
+            return {
+              categoryId,
+              categoryName: catName,
+              monthlyLimit: limit,
+              spent,
+              pct: limit > 0 ? Math.round((spent / limit) * 1000) / 10 : 0,
+            };
+          });
       }
 
       // ── Surplus & savings rate ────────────────────────────────
       const surplus = income - totalSpent;
       const savingsRatePct = income > 0 ? Math.round((surplus / income) * 1000) / 10 : 0;
-
-      // ── Per-category budgets ─────────────────────────────────
-      const userCatBudgets = await db
-        .select()
-        .from(categoryBudgets)
-        .where(eq(categoryBudgets.userId, userId));
-
-      const categoryBudgetStatus = userCatBudgets.map((cb) => {
-        const catName = catMap.get(cb.categoryId) ?? "Unknown";
-        const spent = spendingByCategory[catName] ?? 0;
-        const limit = Number(cb.monthlyLimit);
-        return {
-          categoryId: cb.categoryId,
-          categoryName: catName,
-          monthlyLimit: limit,
-          spent,
-          pct: limit > 0 ? Math.round((spent / limit) * 1000) / 10 : 0,
-        };
-      });
 
       // ── Recent history (last 50) ──────────────────────────────
       const history = allTx.slice(0, 50).map((tx) => ({
@@ -340,7 +342,7 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
           },
           budget_status: budgetStatus,
           category_budget_status: categoryBudgetStatus,
-          has_category_budgets: userCatBudgets.length > 0,
+          has_budget_limits: categoryBudgetStatus.length > 0,
         },
         history,
       };
@@ -640,78 +642,6 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
     }
   )
 
-  // ─── Per-category budgets: GET ──────────────────────────────────────
-  .get(
-    "/users/:userId/category-budgets",
-    async ({ params }) => {
-      const rows = await db
-        .select({
-          id: categoryBudgets.id,
-          categoryId: categoryBudgets.categoryId,
-          monthlyLimit: categoryBudgets.monthlyLimit,
-        })
-        .from(categoryBudgets)
-        .where(eq(categoryBudgets.userId, params.userId));
-
-      // Join category names
-      const catIds = rows.map((r) => r.categoryId).filter(Boolean) as string[];
-      const catRows = catIds.length
-        ? await db.select().from(categories).where(sql`${categories.id} IN (${sql.join(catIds.map(id => sql`${id}`), sql`, `)})`)
-        : [];
-      const catMap = new Map(catRows.map((c) => [c.id, c.name]));
-
-      return {
-        budgets: rows.map((r) => ({
-          categoryId: r.categoryId,
-          categoryName: catMap.get(r.categoryId) ?? null,
-          monthlyLimit: Number(r.monthlyLimit),
-        })),
-      };
-    },
-    {
-      params: t.Object({ userId: t.String() }),
-      detail: { tags: ["FINA Integration"], summary: "Get per-category budgets for user" },
-    }
-  )
-
-  // ─── Per-category budgets: POST (upsert) ────────────────────────────
-  .post(
-    "/users/:userId/category-budgets",
-    async ({ params, body }) => {
-      const userId = params.userId;
-      const results: { categoryId: string; monthlyLimit: number }[] = [];
-
-      for (const item of body.budgets) {
-        await db
-          .insert(categoryBudgets)
-          .values({
-            id: crypto.randomUUID(),
-            userId,
-            categoryId: item.categoryId,
-            monthlyLimit: String(item.monthlyLimit),
-          })
-          .onDuplicateKeyUpdate({
-            set: { monthlyLimit: String(item.monthlyLimit), updatedAt: new Date() },
-          });
-        results.push({ categoryId: item.categoryId, monthlyLimit: item.monthlyLimit });
-      }
-
-      return { success: true, budgets: results };
-    },
-    {
-      params: t.Object({ userId: t.String() }),
-      body: t.Object({
-        budgets: t.Array(
-          t.Object({
-            categoryId: t.String(),
-            monthlyLimit: t.Number({ minimum: 0 }),
-          })
-        ),
-      }),
-      detail: { tags: ["FINA Integration"], summary: "Create/update per-category budgets" },
-    }
-  )
-
   ;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -745,16 +675,44 @@ export const finaChatController = new Elysia({ prefix: "/api/fina" })
       }
 
       try {
-        const finaResp = await fina.chat(userId, role, body.prompt, "Standard", body.history ?? []);
+        const resolvedPrompt = resolveAcceptedBudgetProposal(body.prompt, body.history ?? []);
+        const promptForFina = resolvedPrompt ?? body.prompt;
+        const finaResp = await fina.chat(userId, role, promptForFina, "Standard", body.history ?? []);
         const latencyMs = Math.round(performance.now() - t0);
-        const replyText = finaResp.response ?? "";
+        const modelOutput = finaResp.model_output ?? null;
+        let replyText =
+          typeof modelOutput?.message === "string" && modelOutput.message.trim().length > 0
+            ? modelOutput.message
+            : (finaResp.response ?? "");
 
-        // ── Execute action based on user prompt ─────────────────────
+        // ── Execute action ──────────────────────────────────────────
+        // Prefer the model's structured action — it has full conversation
+        // history and can resolve follow-up turns ("food, 3.6m") that the
+        // single-turn regex in executeFromPrompt cannot. Fall back to the
+        // regex path when the model returned no action (older v8 turns).
         let actionResult: ActionResult | null = null;
         try {
-          actionResult = await executeFromPrompt(body.prompt, userId);
+          const modelAction = modelOutput?.action ?? null;
+          if (modelAction && typeof modelAction === "object") {
+            actionResult = await executeFromAction(modelAction as { type?: string; arguments?: Record<string, unknown> }, userId);
+            if (actionResult) {
+              console.log(`[FINA Chat] Action from model:`, JSON.stringify(actionResult));
+            }
+          }
+          if (!actionResult) {
+            actionResult = await executeFromPrompt(promptForFina, userId);
+          }
           if (actionResult) {
             console.log(`[FINA Chat] Action executed:`, JSON.stringify(actionResult));
+            if (resolvedPrompt && actionResult.success && actionResult.type === "create_budget") {
+              const record = actionResult.record as { categoryName?: string; amountLimit?: number | string; period?: string } | undefined;
+              const categoryName = record?.categoryName ?? "budget";
+              const amount = Number(record?.amountLimit ?? 0);
+              const formattedAmount = Number.isFinite(amount) && amount > 0
+                ? `${amount.toLocaleString("vi-VN")} VND`
+                : "the proposed amount";
+              replyText = `I set your ${categoryName} budget to ${formattedAmount}${record?.period ? ` (${record.period.toLowerCase()})` : ""}.`;
+            }
           }
         } catch (actionErr) {
           console.error(`[FINA Chat] Action execution error:`, actionErr);
@@ -769,7 +727,11 @@ export const finaChatController = new Elysia({ prefix: "/api/fina" })
             aiResponse: replyText,
             modelName: "fina-brain",
             latencyMs,
-            contextSnapshot: { source: "fina", intent: finaResp.intent ?? null },
+            contextSnapshot: {
+              source: "fina",
+              intent: finaResp.intent ?? null,
+              model_output: modelOutput,
+            },
             action: actionResult ?? undefined,
           });
         } catch (logErr) {
@@ -845,11 +807,27 @@ export const finaChatController = new Elysia({ prefix: "/api/fina" })
     }
   )
 
+  // ─── Delete one chat log ─────────────────────────────────────────
+  .delete(
+    "/logs/:logId",
+    async ({ params, userId, set }) => {
+      const deleted = await deleteChatLog(Number(params.logId), userId ?? "");
+      if (!deleted) {
+        set.status = 404;
+        return { message: "Log not found" };
+      }
+      return { success: true, id: Number(params.logId) };
+    },
+    {
+      params: t.Object({ logId: t.String() }),
+      detail: { tags: ["FINA Chat"], summary: "Delete one chat log" },
+    }
+  )
+
   // ─── Dashboard insights + predictions from FINA ─────────────────────
-  .get(
+  .post(
     "/dashboard",
     async ({ userId, set }) => {
-      // Get user role for FINA
       let role = "Student";
       try {
         const [account] = await db
@@ -874,6 +852,36 @@ export const finaChatController = new Elysia({ prefix: "/api/fina" })
     },
     {
       detail: { tags: ["FINA Chat"], summary: "Get dashboard insights + predictions from FINA" },
+    }
+  )
+
+  .get(
+    "/dashboard",
+    async ({ userId, set }) => {
+      let role = "Student";
+      try {
+        const [account] = await db
+          .select()
+          .from(accounts)
+          .where(eq(accounts.userId, userId))
+          .limit(1);
+        role = account?.role ?? "Student";
+      } catch {
+        // continue with default
+      }
+
+      try {
+        const data = await fina.dashboard(userId, role);
+        return data;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "FINA unreachable";
+        console.error(`[FINA Dashboard] error:`, err);
+        set.status = 502;
+        return { message: `FINA Brain error: ${msg}` };
+      }
+    },
+    {
+      detail: { tags: ["FINA Chat"], summary: "Get dashboard insights + predictions from FINA (legacy GET)" },
     }
   );
 
@@ -907,6 +915,75 @@ type ChatLogRow = {
   feedback: number | null;
   timestamp: string | null;
 };
+
+type ChatHistoryTurn = {
+  role: string;
+  content: string;
+};
+
+function resolveAcceptedBudgetProposal(prompt: string, history: ChatHistoryTurn[]): string | null {
+  // Fires in two cases:
+  //  (a) Explicit acceptance referencing the proposal in the current turn.
+  //  (b) Short follow-up like "Okay set under Food and 3.6m please" — the user
+  //      gives an acceptance verb plus a category and/or amount, and the prior
+  //      assistant turn was clearly proposing a budget. Without (b), v8 tends
+  //      to misclassify the turn as UPDATE_TRANSACTION because it sees an
+  //      amount + category but no "budget" keyword.
+  const isAcceptance = /\b(ok|okay|yes|sure|confirm|confirmed|do it|go ahead|make|set|create|apply|please)\b/i.test(prompt);
+  if (!isAcceptance) return null;
+
+  const currentCategory = extractBudgetCategory(prompt);
+  const currentAmount = extractBudgetAmount(prompt);
+  const explicitProposalRef = /\bbudget\b/i.test(prompt) && /\b(proposal|proposed|suggestion|suggested|recommendation|recommended|based on)\b/i.test(prompt);
+  const followUpSignal = currentCategory !== null || currentAmount !== null;
+  if (!explicitProposalRef && !followUpSignal) return null;
+
+  for (const turn of [...history].reverse()) {
+    if (turn.role !== "assistant") continue;
+    const text = extractAssistantMessage(turn.content);
+    if (!/\bbudget\b/i.test(text)) continue;
+
+    const category = currentCategory ?? extractBudgetCategory(text);
+    const amount = currentAmount ?? extractBudgetAmount(text);
+    if (category && amount) {
+      return `set budget ${amount.toLocaleString("vi-VN")} VND for ${category}`;
+    }
+  }
+
+  return null;
+}
+
+function extractAssistantMessage(content: string): string {
+  try {
+    const parsed = JSON.parse(content) as { message?: unknown };
+    if (typeof parsed.message === "string") return parsed.message;
+  } catch {
+    // Plain-text history is still valid for proposal recovery.
+  }
+  return content;
+}
+
+function extractBudgetCategory(text: string): string | null {
+  const knownCategories = ["Food", "Grocery", "Bill", "Shopping", "Other"];
+  const match = knownCategories.find((category) => new RegExp(`\\b${category}\\b`, "i").test(text));
+  return match ?? null;
+}
+
+function extractBudgetAmount(text: string): number | null {
+  const formatted = text.match(/(\d{1,3}(?:[.,]\d{3})+)\s*(?:VND|dong|đ)?/i);
+  if (formatted) {
+    const amount = Number(formatted[1]!.replace(/[.,]/g, ""));
+    return amount > 0 ? amount : null;
+  }
+
+  const million = text.match(/(\d+(?:[.,]\d+)?)\s*(?:million|mil|m|triệu|tr)\b/i);
+  if (million) {
+    const amount = Number(million[1]!.replace(",", ".")) * 1_000_000;
+    return amount > 0 ? amount : null;
+  }
+
+  return null;
+}
 
 async function insertChatLog(data: {
   accountId: string;
@@ -982,6 +1059,16 @@ async function updateChatLogFeedback(logId: number, feedback: number | null): Pr
   } finally {
     conn.release();
   }
+}
+
+async function deleteChatLog(logId: number, accountId: string): Promise<boolean> {
+  if (!Number.isFinite(logId) || !accountId) return false;
+
+  const [result] = await insightsPool.execute(
+    "DELETE FROM chat_logs WHERE id = ? AND account_id = ?",
+    [logId, accountId]
+  );
+  return ((result as { affectedRows?: number }).affectedRows ?? 0) > 0;
 }
 
 function parseChatLogRow(row: unknown): ChatLogRow {

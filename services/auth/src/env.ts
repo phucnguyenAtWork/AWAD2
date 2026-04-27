@@ -46,7 +46,7 @@ const EnvSchema = z.object({
   AUTH_DATABASE_URL: z.string().url().optional(),
 
   JWT_SECRET: stringWithDefault(24, () => defaultJwtSecret),
-  JWT_EXPIRES_IN: z.union([z.string(), z.number()]).default("15m"),
+  JWT_EXPIRES_IN: z.union([z.string(), z.number()]).default("1h"),
   BCRYPT_SALT_ROUNDS: numberFromEnv(12),
 
   RATE_LIMIT_WINDOW_MS: numberFromEnv(60000),

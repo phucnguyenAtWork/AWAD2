@@ -16,7 +16,7 @@ export type PublicUser = {
   createdAt: string;
 };
 
-export type UserRole = 'Student' | 'Worker' | 'Freelancer' | 'Parent' | 'Retiree';
+export type UserRole = 'Student' | 'Worker' | 'Freelancer';
 
 export type BackendAccount = {
   id: string;

@@ -37,7 +37,7 @@ const EnvSchema = z.object({
   FRONTEND_ORIGIN: z.string().optional().default(defaults.frontendOrigin),
   FINANCE_API_URL: z.string().optional().default(defaults.financeApiUrl),
 
-  GEMINI_API_KEY: z.string().min(10, "GEMINI_API_KEY required"),
+  GEMINI_API_KEY: z.string().optional(),
 });
 
 export type PartialEnv = z.infer<typeof EnvSchema>;

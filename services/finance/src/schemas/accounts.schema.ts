@@ -1,7 +1,7 @@
 import { mysqlTable, varchar, mysqlEnum, timestamp } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
 
-export const ROLES = ["Student", "Worker", "Freelancer", "Parent", "Retiree"] as const;
+export const ROLES = ["Student", "Worker", "Freelancer"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const accounts = mysqlTable("accounts", {
@@ -22,7 +22,7 @@ export const accounts = mysqlTable("accounts", {
     .default("VND")
     .notNull(),
 
-  role: mysqlEnum("role", ["Student", "Worker", "Freelancer", "Parent", "Retiree"])
+  role: mysqlEnum("role", ["Student", "Worker", "Freelancer"])
     .default("Student")
     .notNull(),
 

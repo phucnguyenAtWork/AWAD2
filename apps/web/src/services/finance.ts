@@ -87,6 +87,11 @@ export type BudgetDraft = Omit<BudgetInput, 'amountLimit' | 'alertThreshold' | '
 };
 
 export type CategoryDraft = Omit<NewCategory, 'createdAt'>;
+export type BudgetPreferences = {
+  needs_pct: number;
+  wants_pct: number;
+  savings_pct: number;
+};
 
 export const financeService = {
   async listAccounts(token: string, options: RequestOptions = {}): Promise<Account[]> {
@@ -207,4 +212,21 @@ export const financeService = {
       ...options,
     });
   },
+
+  async getBudgetPreferences(token: string, userId: string, options: RequestOptions = {}): Promise<BudgetPreferences | null> {
+    return request<BudgetPreferences | null>(FINANCE_BASE, `/api/fina/users/${encodeURIComponent(userId)}/budget-preferences`, {
+      token,
+      ...options,
+    });
+  },
+
+  async saveBudgetPreferences(token: string, userId: string, payload: BudgetPreferences, options: RequestOptions = {}): Promise<BudgetPreferences> {
+    return request<BudgetPreferences, BudgetPreferences>(FINANCE_BASE, `/api/fina/users/${encodeURIComponent(userId)}/budget-preferences`, {
+      method: 'POST',
+      token,
+      body: payload,
+      ...options,
+    });
+  },
+
 };

@@ -17,8 +17,6 @@ const accountResponse = t.Object({
     Student: "Student",
     Worker: "Worker",
     Freelancer: "Freelancer",
-    Parent: "Parent",
-    Retiree: "Retiree",
   }),
   frictionLevel: t.Enum({
     HIGH: "HIGH",
@@ -44,8 +42,6 @@ const accountInput = t.Object({
       t.Literal("Student"),
       t.Literal("Worker"),
       t.Literal("Freelancer"),
-      t.Literal("Parent"),
-      t.Literal("Retiree"),
     ])
   ),
   frictionLevel: t.Optional(

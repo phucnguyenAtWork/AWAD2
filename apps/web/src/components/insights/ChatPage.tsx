@@ -2,18 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../common/Card';
 import { useAuth } from '../auth/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { insightsService, type InsightLog, type DashboardData, type ActionResult, type HistoryMessage } from '../../services/insights';
+import { insightsService, type InsightLog, type ActionResult, type HistoryMessage } from '../../services/insights';
+import { financeService } from '../../services/finance';
+import type { Transaction } from '../../services/types';
 
 export function ChatPage() {
   const { token, user, logout } = useAuth();
-  const { currency } = useCurrency();
+  const { currency, formatPrice } = useCurrency();
   const accountId = user?.id ?? '';
   const [logs, setLogs] = useState<InsightLog[]>([]);
   const [actionMap, setActionMap] = useState<Record<number, ActionResult>>({});
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -24,18 +26,35 @@ export function ChatPage() {
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load history'));
   }, [accountId, logout, token]);
 
-  // TODO: re-enable once FINA dashboard response is cached server-side for speed
-  // useEffect(() => {
-  //   if (!token) return;
-  //   void insightsService
-  //     .dashboard(token, { onUnauthorized: logout })
-  //     .then(setDashboard)
-  //     .catch(() => {/* non-critical */});
-  // }, [token, logout]);
+  useEffect(() => {
+    if (!token) return;
+    void financeService
+      .listTransactions(token, { onUnauthorized: logout })
+      .then(setTransactions)
+      .catch(() => {/* non-critical: sidebar will just be empty */});
+  }, [token, logout]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs, sending]);
+
+  const monthSummary = useMemo(() => {
+    const now = new Date();
+    const m = now.getMonth();
+    const y = now.getFullYear();
+    let income = 0;
+    let expense = 0;
+    let count = 0;
+    for (const t of transactions) {
+      const d = new Date(t.occurredAt || t.occurred_at);
+      if (d.getMonth() !== m || d.getFullYear() !== y) continue;
+      count += 1;
+      const amt = Number(t.amount || 0);
+      if (t.type === 'INCOME') income += amt;
+      else if (t.type === 'EXPENSE') expense += amt;
+    }
+    return { income, expense, net: income - expense, count };
+  }, [transactions]);
 
   const handleSend = async () => {
     if (!token || !accountId) {
@@ -49,7 +68,7 @@ export function ChatPage() {
       // Build conversation history from existing messages for multi-turn context
       const history: HistoryMessage[] = messages.map((msg) => ({
         role: msg.role === 'user' ? 'user' as const : 'assistant' as const,
-        content: msg.text,
+        content: msg.historyContent ?? msg.text,
       }));
 
       const { log, action } = await insightsService.chat(
@@ -81,15 +100,50 @@ export function ChatPage() {
     }
   };
 
+  const handleDeleteLog = async (logId: number) => {
+    if (!token) return;
+    const confirmed = window.confirm('Delete this chat response from history? This also removes it from the database.');
+    if (!confirmed) return;
+
+    try {
+      await insightsService.deleteLog(token, logId, { onUnauthorized: logout });
+      setLogs((prev) => prev.filter((log) => log.id !== logId));
+      setActionMap((prev) => {
+        const next = { ...prev };
+        delete next[logId];
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete chat log');
+    }
+  };
+
   const messages = useMemo(() => {
-    const flattened: { id: string | number; logId: number; role: 'user' | 'ai'; text: string; timestamp: string | null; latencyMs: number | null; feedback: number | null; action?: ActionResult }[] = [];
+    const flattened: { id: string | number; logId: number; role: 'user' | 'ai'; text: string; historyContent?: string; timestamp: string | null; latencyMs: number | null; feedback: number | null; action?: ActionResult }[] = [];
     logs.forEach((log) => {
       if (log.user_query) {
         flattened.push({ id: `${log.id}-u`, logId: log.id, role: 'user', text: log.user_query, timestamp: log.timestamp, latencyMs: null, feedback: null });
       }
       if (log.ai_response) {
         const act = actionMap[log.id] ?? (log.action && typeof log.action === 'object' && !Array.isArray(log.action) ? log.action as ActionResult : undefined);
-        flattened.push({ id: `${log.id}-ai`, logId: log.id, role: 'ai', text: log.ai_response, timestamp: log.timestamp, latencyMs: log.latency_ms, feedback: log.feedback, action: act });
+        const historyContent =
+          log.context_snapshot &&
+          typeof log.context_snapshot === 'object' &&
+          !Array.isArray(log.context_snapshot) &&
+          'model_output' in log.context_snapshot &&
+          log.context_snapshot.model_output
+            ? JSON.stringify(log.context_snapshot.model_output)
+            : log.ai_response;
+        let displayText = log.ai_response;
+        try {
+          const parsed = JSON.parse(log.ai_response);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.message === 'string') {
+            displayText = parsed.message;
+          }
+        } catch {
+          // Keep raw ai_response when it is normal prose.
+        }
+        flattened.push({ id: `${log.id}-ai`, logId: log.id, role: 'ai', text: displayText, historyContent, timestamp: log.timestamp, latencyMs: log.latency_ms, feedback: log.feedback, action: act });
       }
     });
     return flattened.sort((a, b) => new Date(a.timestamp ?? 0).getTime() - new Date(b.timestamp ?? 0).getTime());
@@ -140,10 +194,10 @@ export function ChatPage() {
 
   const quickPrompts = ['Log 50k lunch expense', 'How much can I save?', 'Set budget 5m for food', 'Delete last transaction'];
 
-  const formatAmount = (amount: number, cur: string) => {
-    if (cur === 'VND') return `${amount.toLocaleString('vi-VN')}d`;
-    return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-  };
+  const monthName = new Date().toLocaleString('en-US', { month: 'long' });
+  const total = monthSummary.income + monthSummary.expense;
+  const incomePct = total > 0 ? (monthSummary.income / total) * 100 : 0;
+  const expensePct = total > 0 ? (monthSummary.expense / total) * 100 : 0;
 
   return (
     <div className="max-w-6xl mx-auto p-4">
@@ -234,6 +288,15 @@ export function ChatPage() {
                         {msg.latencyMs != null && (
                           <span className="text-[10px] text-slate-400 ml-auto">{msg.latencyMs}ms</span>
                         )}
+                        <button
+                          onClick={() => void handleDeleteLog(msg.logId)}
+                          className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent transition-colors"
+                          title="Delete this chat log"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                            <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75V4H3.5a.75.75 0 000 1.5h.3l.73 10.18A2.5 2.5 0 007.02 18h5.96a2.5 2.5 0 002.49-2.32L16.2 5.5h.3a.75.75 0 000-1.5H14v-.25A2.75 2.75 0 0011.25 1h-2.5zM7.5 4v-.25c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25V4h-5zm1.25 4a.75.75 0 01.75.75v5a.75.75 0 01-1.5 0v-5A.75.75 0 018.75 8zm3.25.75a.75.75 0 00-1.5 0v5a.75.75 0 001.5 0v-5z" clipRule="evenodd" />
+                          </svg>
+                        </button>
                       </div>
                     )}
                   </div>
@@ -305,66 +368,72 @@ export function ChatPage() {
           </Card>
         </div>
 
-        {/* ── Right: Smart Insights + AI Predictions ── */}
+        {/* ── Right: This-month summary ── */}
         <div className="space-y-4">
-          {/* Smart Insights */}
-          <Card className="p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-indigo-600">
-                <path fillRule="evenodd" d="M9 4.5a.75.75 0 01.721.544l.813 2.846a3.75 3.75 0 002.576 2.576l2.846.813a.75.75 0 010 1.442l-2.846.813a3.75 3.75 0 00-2.576 2.576l-.813 2.846a.75.75 0 01-1.442 0l-.813-2.846a3.75 3.75 0 00-2.576-2.576l-2.846-.813a.75.75 0 010-1.442l2.846-.813A3.75 3.75 0 007.466 7.89l.813-2.846A.75.75 0 019 4.5z" clipRule="evenodd" />
-              </svg>
-              <h3 className="font-semibold text-slate-900">Smart Insights</h3>
-            </div>
-            {dashboard?.smart_insights && dashboard.smart_insights.length > 0 ? (
-              <div className="space-y-3">
-                {dashboard.smart_insights.map((insight, i) => (
-                  <div key={i} className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
-                    <p className={`text-xs font-semibold mb-0.5 ${
-                      insight.type === 'warning' ? 'text-amber-600' :
-                      insight.type === 'negative' ? 'text-rose-600' :
-                      'text-indigo-600'
-                    }`}>
-                      {insight.title}
-                    </p>
-                    <p className="text-xs text-slate-600 leading-relaxed">{insight.description}</p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-xs text-slate-400 text-center py-4">
-                {dashboard ? 'No insights available yet' : 'Loading insights...'}
-              </div>
-            )}
-          </Card>
-
-          {/* AI Predictions */}
-          <Card className="p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-indigo-600">
-                <path fillRule="evenodd" d="M2.25 13.5a8.25 8.25 0 018.25-8.25.75.75 0 01.75.75v6.75H18a.75.75 0 01.75.75 8.25 8.25 0 01-16.5 0z" clipRule="evenodd" />
-                <path fillRule="evenodd" d="M12.75 3a.75.75 0 01.75-.75 8.25 8.25 0 018.25 8.25.75.75 0 01-.75.75h-7.5a.75.75 0 01-.75-.75V3z" clipRule="evenodd" />
-              </svg>
-              <h3 className="font-semibold text-slate-900">AI Predictions</h3>
-            </div>
-            {dashboard?.prediction ? (
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <p className="text-xs text-slate-500 mb-1">Projected Spend</p>
-                <p className="text-2xl font-bold text-slate-900">
-                  {formatAmount(dashboard.prediction.projected_spend, dashboard.prediction.currency)}
-                </p>
-                <p className="text-xs text-slate-400 mt-1">Based on your habits</p>
-                <div className="mt-3 pt-3 border-t border-slate-100">
-                  <p className="text-xs text-indigo-600 font-medium">
-                    {Math.round(dashboard.prediction.confidence * 100)}% confidence
-                    <span className="text-slate-400 font-normal"> &middot; Updated just now</span>
-                  </p>
+                <h3 className="font-semibold text-slate-900">{monthName} at a glance</h3>
+                <p className="text-xs text-slate-400">{monthSummary.count} transaction{monthSummary.count === 1 ? '' : 's'} this month</p>
+              </div>
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3M3 11h18M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />
+                </svg>
+              </div>
+            </div>
+
+            {/* Net balance */}
+            <div className="mb-4">
+              <p className="text-xs font-medium text-slate-500">Net balance</p>
+              <p className={`text-2xl font-bold ${monthSummary.net >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                {formatPrice(monthSummary.net)}
+              </p>
+            </div>
+
+            {/* Income vs Expense bar */}
+            {total > 0 ? (
+              <div className="mb-4">
+                <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div className="bg-emerald-500" style={{ width: `${incomePct}%` }} />
+                  <div className="bg-rose-500" style={{ width: `${expensePct}%` }} />
+                </div>
+                <div className="mt-1 flex justify-between text-[11px] text-slate-400">
+                  <span>Income {incomePct.toFixed(0)}%</span>
+                  <span>Expense {expensePct.toFixed(0)}%</span>
                 </div>
               </div>
             ) : (
-              <div className="text-xs text-slate-400 text-center py-4">
-                {dashboard ? 'No predictions available yet' : 'Loading predictions...'}
+              <div className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400 text-center">
+                No activity this month yet
               </div>
             )}
+
+            {/* Income row */}
+            <div className="flex items-center justify-between rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 mb-2">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-600">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                  </svg>
+                </div>
+                <span className="text-xs font-medium text-slate-600">Income</span>
+              </div>
+              <span className="text-sm font-semibold text-emerald-700">{formatPrice(monthSummary.income)}</span>
+            </div>
+
+            {/* Expense row */}
+            <div className="flex items-center justify-between rounded-lg border border-rose-100 bg-rose-50/60 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-rose-100 text-rose-600">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                  </svg>
+                </div>
+                <span className="text-xs font-medium text-slate-600">Expense</span>
+              </div>
+              <span className="text-sm font-semibold text-rose-700">{formatPrice(monthSummary.expense)}</span>
+            </div>
           </Card>
         </div>
       </div>

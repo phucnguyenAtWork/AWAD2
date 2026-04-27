@@ -75,7 +75,20 @@ export const insightsService = {
     });
   },
 
+  async deleteLog(token: string, logId: number, options: { onUnauthorized?: () => void } = {}): Promise<{ success: boolean; id: number }> {
+    return request<{ success: boolean; id: number }>(INSIGHTS_BASE, `/api/fina/logs/${logId}`, {
+      method: 'DELETE',
+      token,
+      ...options,
+    });
+  },
+
   async dashboard(token: string, options: { onUnauthorized?: () => void } = {}): Promise<DashboardData> {
-    return request<DashboardData>(INSIGHTS_BASE, '/api/fina/dashboard', { token, ...options });
+    return request<DashboardData, Record<string, never>>(INSIGHTS_BASE, '/api/fina/dashboard', {
+      method: 'POST',
+      token,
+      body: {},
+      ...options,
+    });
   },
 };

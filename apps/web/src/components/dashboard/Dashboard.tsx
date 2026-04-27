@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
-import { financeService } from '../../services/finance';
+import { financeService, type BudgetPreferences } from '../../services/finance';
 import type { Budget, Transaction } from '../../services/types';
 
 import { YearlySummary } from './YearlySummary';
@@ -15,25 +15,28 @@ export function Dashboard() {
   const { token, user, logout } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [budgetSplit, setBudgetSplit] = useState<BudgetPreferences | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     if (!token) return;
     try {
       setLoading(true);
-      const [txData, budgetData] = await Promise.all([
+      const [txData, budgetData, splitData] = await Promise.all([
         financeService.listTransactions(token, { onUnauthorized: logout }),
         financeService.listBudgets(token, { onUnauthorized: logout }),
+        user?.id ? financeService.getBudgetPreferences(token, user.id, { onUnauthorized: logout }) : Promise.resolve(null),
       ]);
       setTransactions(txData);
       setBudgets(budgetData);
+      setBudgetSplit(splitData);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Dashboard load failed', err);
     } finally {
       setLoading(false);
     }
-  }, [logout, token]);
+  }, [logout, token, user?.id]);
 
   useEffect(() => {
     void loadData();
@@ -113,6 +116,8 @@ export function Dashboard() {
     };
   }, [transactions, budgets]);
 
+  const activeSplit = budgetSplit ?? { needs_pct: 50, wants_pct: 30, savings_pct: 20 };
+
   if (loading) return <div className="p-10 text-center text-slate-500">Loading Dashboard...</div>;
 
   return (
@@ -160,6 +165,41 @@ export function Dashboard() {
         </div>
 
         <div className="space-y-6">
+          <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-900">Budget Split</h3>
+                <p className="text-sm text-slate-500">Your active needs / wants / savings rule</p>
+              </div>
+              <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                {activeSplit.needs_pct}/{activeSplit.wants_pct}/{activeSplit.savings_pct}
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-full bg-slate-100 h-4">
+              <div className="flex h-full w-full">
+                <div className="bg-emerald-500" style={{ width: `${activeSplit.needs_pct}%` }} />
+                <div className="bg-amber-500" style={{ width: `${activeSplit.wants_pct}%` }} />
+                <div className="bg-indigo-500" style={{ width: `${activeSplit.savings_pct}%` }} />
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-xl bg-emerald-50 px-3 py-3">
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-emerald-700">Needs</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">{activeSplit.needs_pct}%</div>
+              </div>
+              <div className="rounded-xl bg-amber-50 px-3 py-3">
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-amber-700">Wants</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">{activeSplit.wants_pct}%</div>
+              </div>
+              <div className="rounded-xl bg-indigo-50 px-3 py-3">
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-indigo-700">Savings</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">{activeSplit.savings_pct}%</div>
+              </div>
+            </div>
+          </div>
+
           <BudgetGauge spent={stats.budgetSpent} limit={stats.realTotalLimit} />
 
           <BurnoutRatio spent={stats.budgetSpent} limit={stats.realTotalLimit} />
