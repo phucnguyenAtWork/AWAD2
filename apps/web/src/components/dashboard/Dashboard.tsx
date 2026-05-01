@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { financeService, type BudgetPreferences } from '../../services/finance';
+import { insightsService, type ForecastResponse } from '../../services/insights';
 import type { Budget, Transaction } from '../../services/types';
+import { useCurrency } from '../context/CurrencyContext';
 
 import { YearlySummary } from './YearlySummary';
 import { StatCard } from './StatCard';
@@ -13,23 +15,29 @@ import { BurnoutRatio } from './BurnoutRatio';
 
 export function Dashboard() {
   const { token, user, logout } = useAuth();
+  const { formatPrice } = useCurrency();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetSplit, setBudgetSplit] = useState<BudgetPreferences | null>(null);
+  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     if (!token) return;
     try {
       setLoading(true);
-      const [txData, budgetData, splitData] = await Promise.all([
+      const [txData, budgetData, splitData, forecastData] = await Promise.all([
         financeService.listTransactions(token, { onUnauthorized: logout }),
         financeService.listBudgets(token, { onUnauthorized: logout }),
         user?.id ? financeService.getBudgetPreferences(token, user.id, { onUnauthorized: logout }) : Promise.resolve(null),
+        user?.id
+          ? insightsService.getForecast(token, user.id, { onUnauthorized: logout }).catch(() => null)
+          : Promise.resolve(null),
       ]);
       setTransactions(txData);
       setBudgets(budgetData);
       setBudgetSplit(splitData);
+      setForecast(forecastData);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Dashboard load failed', err);
@@ -89,6 +97,9 @@ export function Dashboard() {
       totalExpense,
       currentMonthExpenses,
       totalBalance,
+      thisMonthIncome,
+      thisMonthExpense,
+      thisMonthBalance,
       realTotalLimit: budgets.reduce((sum, b) => sum + Number(b.amountLimit ?? 0), 0),
       budgetSpent: budgets.reduce((sum, b) => {
         const start = new Date(b.startDate).getTime();
@@ -135,10 +146,10 @@ export function Dashboard() {
             <YearlySummary transactions={transactions} />
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-              <StatCard title="Received" amount={stats.totalIncome} type="positive" change={stats.incomeChange} />
-              <StatCard title="Sent" amount={stats.totalExpense} type="negative" change={stats.expenseChange} />
+              <StatCard title="Received (This Month)" amount={stats.thisMonthIncome} type="positive" change={stats.incomeChange} />
+              <StatCard title="Spent (This Month)" amount={stats.thisMonthExpense} type="negative" change={stats.expenseChange} />
               <div className="sm:col-span-2 lg:col-span-1 xl:col-span-2">
-                <StatCard title="Net Balance" amount={stats.totalBalance} type="balance" change={stats.balanceChange} />
+                <StatCard title="Net (This Month)" amount={stats.thisMonthBalance} type="balance" change={stats.balanceChange} />
               </div>
             </div>
           </div>
@@ -200,6 +211,8 @@ export function Dashboard() {
             </div>
           </div>
 
+          <ForecastCard forecast={forecast} thisMonthExpense={stats.thisMonthExpense} formatPrice={formatPrice} />
+
           <BudgetGauge spent={stats.budgetSpent} limit={stats.realTotalLimit} />
 
           <BurnoutRatio spent={stats.budgetSpent} limit={stats.realTotalLimit} />
@@ -207,6 +220,56 @@ export function Dashboard() {
           <CategoryDonut transactions={transactions} />
         </div>
       </div>
+    </div>
+  );
+}
+
+interface ForecastCardProps {
+  forecast: ForecastResponse | null;
+  thisMonthExpense: number;
+  formatPrice: (n: number) => string;
+}
+
+function ForecastCard({ forecast, thisMonthExpense, formatPrice }: ForecastCardProps) {
+  const projected = forecast?.monthly?.total ?? null;
+  const rawConfidence = forecast?.confidence ?? null;
+  // FINA Brain returns confidence on a 0–100 scale for /forecast and 0–1 for callbacks; auto-detect.
+  const confidencePct =
+    rawConfidence === null
+      ? null
+      : Math.max(0, Math.min(100, Math.round(rawConfidence > 1 ? rawConfidence : rawConfidence * 100)));
+  const sourceLabel = forecast?.source === 'lstm' ? 'LSTM' : forecast?.source ?? 'forecast';
+  const remaining = projected !== null ? Math.max(0, projected - thisMonthExpense) : null;
+  const updatedAt = forecast?.cachedAt ? new Date(forecast.cachedAt).toLocaleString() : null;
+
+  return (
+    <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h3 className="font-bold text-slate-900">Projected Month-End Spend</h3>
+          <p className="text-sm text-slate-500">FINA {sourceLabel} forecast</p>
+        </div>
+        {confidencePct !== null && (
+          <div className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
+            {confidencePct}% confidence
+          </div>
+        )}
+      </div>
+
+      {projected === null ? (
+        <p className="text-sm text-slate-400">Forecast unavailable. Train the LSTM model or check FINA Brain connectivity.</p>
+      ) : (
+        <>
+          <div className="text-2xl font-bold text-slate-900">{formatPrice(projected)}</div>
+          <div className="mt-1 text-xs text-slate-500">
+            Spent so far this month: <span className="font-medium text-slate-700">{formatPrice(thisMonthExpense)}</span>
+            {remaining !== null && (
+              <> · Projected remaining: <span className="font-medium text-slate-700">{formatPrice(remaining)}</span></>
+            )}
+          </div>
+          {updatedAt && <div className="mt-2 text-[11px] text-slate-400">Updated {updatedAt}</div>}
+        </>
+      )}
     </div>
   );
 }

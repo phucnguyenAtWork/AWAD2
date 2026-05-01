@@ -1,6 +1,7 @@
 import {
   createTransaction,
   deleteTransaction,
+  deleteTransactionsRange,
   getTransaction,
   listTransactions,
   updateTransaction,
@@ -29,4 +30,6 @@ export const TransactionsService = {
   },
   update: (id: string, data: Partial<TransactionInput>) => updateTransaction(id, data),
   delete: (id: string) => deleteTransaction(id),
+  deleteRange: (userId: string, from: Date, to: Date) =>
+    deleteTransactionsRange(userId, from, to),
 };

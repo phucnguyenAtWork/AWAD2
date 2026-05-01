@@ -12,7 +12,7 @@ Personal financial planning has become increasingly difficult in the modern econ
 
 Recent advances in large language models (LLMs), retrieval-augmented generation (RAG), and small-footprint supervised fine-tuning (SFT) make it possible to build a personal finance assistant that is both *grounded* in the user's real transactions and *adaptive* to their life stage. Instead of offering the same generic tips to everyone, an assistant can reason about a student's part-time income, a salaried worker's fixed obligations, or a freelancer's irregular cashflow — and produce concrete, numeric, role-aware recommendations. This is the motivation for the work presented in this thesis.
 
-**In this thesis, I propose a framework for smart financial planning tailored to individual life stages, called FINA (Financial Intelligence Agent).** The framework combines (1) a full-stack personal finance application built on a Turborepo/Bun monorepo with an Elysia + Drizzle + MySQL backend and a React + Vite frontend, (2) a locally-hosted AI brain based on a QLoRA-fine-tuned Qwen2.5-3B-Instruct model producing strict-schema JSON responses, (3) a retrieval-augmented context layer that pulls budgets, monthly spending, anomalies, goals, and category status from the user's finance database, (4) an LSTM-based forecasting module and a classifier-based transaction categorizer, and (5) a role-aware system prompt that adapts advice to the user's life stage (Student, Worker, Freelancer, Parent, Retiree). The method includes the following steps: collect and normalize user transactions through the finance service; compute structured context (budgets, month-over-month deltas, recurring items, forecasts); retrieve relevant historical context via a vector store; pass prompt + context + role + history to the fine-tuned LLM on a local Windows agent; validate the model's JSON output against a Pydantic schema; and finally apply any inferred CRUD actions back to the user's finance database while logging the full interaction for auditability. Experimental results on a hybrid training set of 3,000+ role-balanced samples show that the fine-tuned model produces stage-appropriate, grounded, and actionable responses at sub-second latency on a single consumer GPU, outperforming a generic non-fine-tuned baseline on role-specificity and context-grounding benchmarks.
+**In this thesis, I propose a framework for smart financial planning tailored to individual life stages, called FINA (Financial Intelligence Agent).** The framework combines (1) a full-stack personal finance application built on a Turborepo/Bun monorepo with an Elysia + Drizzle + MySQL backend and a React + Vite frontend, (2) a locally-hosted AI brain based on a QLoRA-fine-tuned Qwen2.5-3B-Instruct model producing strict-schema JSON responses, (3) a retrieval-augmented context layer that pulls budgets, monthly spending, anomalies, goals, and category status from the user's finance database, (4) an LSTM-based forecasting module and a classifier-based transaction categorizer, and (5) a role-aware system prompt that adapts advice to the user's life stage (Student, Worker, Freelancer). The method includes the following steps: collect and normalize user transactions through the finance service; compute structured context (budgets, month-over-month deltas, recurring items, forecasts); retrieve relevant historical context via a vector store; pass prompt + context + role + history to the fine-tuned LLM on a local Windows agent; validate the model's JSON output against a Pydantic schema; and finally apply any inferred CRUD actions back to the user's finance database while logging the full interaction for auditability. Experimental results on a hybrid training set of 3,000+ role-balanced samples show that the fine-tuned model produces stage-appropriate, grounded, and actionable responses at sub-second latency on a single consumer GPU, outperforming a generic non-fine-tuned baseline on role-specificity and context-grounding benchmarks.
 
 ---
 
@@ -20,7 +20,7 @@ Recent advances in large language models (LLMs), retrieval-augmented generation 
 
 ### 1.1 Overview
 
-Money touches every part of daily life. Whether a person is a student budgeting a monthly allowance, a young professional planning their first apartment, a freelancer smoothing out a variable income stream, a parent planning for a child's education, or a retiree balancing a pension against healthcare costs, every one of these situations requires active, personalized financial planning. Yet most people do not plan. They react. They notice at the end of the month that their account is lower than expected, or they discover too late that a recurring subscription has quietly doubled. Spreadsheets are abandoned after two weeks, notebooks are lost, and the majority of personal finance applications on the market stop being opened within the first 30 days of installation.
+Money touches every part of daily life. Whether a person is a student budgeting a monthly allowance, a young professional planning their first apartment, a freelancer smoothing out a variable income stream, a parent planning for a child's education, or a retiree balancing a pension against healthcare costs, every one of these situations requires active, personalized financial planning. Yet most people do not plan. They react. They notice at the end of the month that their account is lower than expected, or they discover too late that a recurring subscription has quietly doubled. Spreadsheets are abandoned after two weeks, notebooks are lost, and the majority of personal finance applications on the market stop being opened within the first 30 days of installation. Of these archetypes, this thesis scopes its evaluation to three — Student, Worker, and Freelancer — and treats Parent and Retiree as future work (see §6.2).
 
 At the same time, artificial intelligence has crossed a threshold that makes a new class of personal finance tools possible. Large language models can now converse naturally, small fine-tuned models can be deployed on consumer hardware, retrieval-augmented pipelines can ground model outputs in real user data, and lightweight forecasting models can project future cashflow from a handful of months of transaction history. The remaining problem is not raw capability. It is *fit*: how to combine these technologies into a product that actually adapts to the individual's life stage, speaks in their language, uses their real numbers, and gives them advice they can act on today.
 
@@ -32,7 +32,7 @@ Personal finance is one of the most common domains in consumer software, and yet
 
 **Problem 1 — Generic advice.** Today's major personal finance apps (for example, Money Lover, MISA, YNAB-style budgeting tools) give the same advice to every user. They show pie charts, bar charts, and budget warnings that assume the user has a stable monthly salary, fixed rent, and predictable expenses. A student with a 3-million-VND monthly allowance, a gig worker with a 20-million-VND fluctuating month, and a retiree on a fixed pension receive the same on-screen tips. This is not useful advice; it is noise.
 
-**Problem 2 — Missing personalization by life stage.** Financial priorities change dramatically through a person's life. A student's priority is typically affordability and avoiding debt. A young worker prioritizes building an emergency fund and starting retirement contributions (BHXH in the Vietnamese context). A freelancer needs income smoothing, tax reserves, and separation of business and personal finances. A parent plans for education funds and family insurance. A retiree balances preservation of capital with healthcare. No existing app encodes these priorities directly into its advice.
+**Problem 2 — Missing personalization by life stage.** Financial priorities change dramatically through a person's life. A student's priority is typically affordability and avoiding debt. A young worker prioritizes building an emergency fund and starting retirement contributions (BHXH in the Vietnamese context). A freelancer needs income smoothing, tax reserves, and separation of business and personal finances. A parent plans for education funds and family insurance. A retiree balances preservation of capital with healthcare. No existing app encodes these priorities directly into its advice. (This thesis addresses the problem for three of these archetypes — Student, Worker, Freelancer — and discusses persona expansion to Parent and Retiree in §6.2.)
 
 **Problem 3 — Weak grounding in real numbers.** Even when apps include an AI chatbot, the chatbot typically gives textbook-level advice disconnected from the user's actual data. Users ask "can I afford a new phone?" and receive generic talk about budgeting rather than a specific answer based on their cashflow, their current savings rate, and their upcoming fixed expenses.
 
@@ -48,7 +48,7 @@ These seven problems, taken together, explain why the author chose to build a sy
 
 ### 1.3 Scope and Objectives
 
-**Scope.** This thesis covers the design, implementation, and evaluation of a personal finance planning application with an integrated AI assistant, targeted primarily at Vietnamese individual users handling VND-denominated income and expenses. The application's scope includes: transaction tracking, category and budget management, monthly and daily spending summaries, month-over-month comparison, recurring expense detection, near-term cashflow forecasting, automated transaction categorization, and a conversational AI assistant that adapts to five life-stage roles (Student, Worker, Freelancer, Parent, Retiree). The scope deliberately excludes: investment portfolio management, stock brokerage integration, tax filing, and multi-currency accounting beyond simple currency display. It also excludes joint-account shared-budget features between multiple users.
+**Scope.** This thesis covers the design, implementation, and evaluation of a personal finance planning application with an integrated AI assistant, targeted primarily at Vietnamese individual users handling VND-denominated income and expenses. The application's scope includes: transaction tracking, category and budget management, monthly and daily spending summaries, month-over-month comparison, recurring expense detection, near-term cashflow forecasting, automated transaction categorization, and a conversational AI assistant that adapts to three life-stage roles (Student, Worker, Freelancer). The scope deliberately excludes: investment portfolio management, stock brokerage integration, tax filing, and multi-currency accounting beyond simple currency display. It also excludes joint-account shared-budget features between multiple users.
 
 **Primary objective.** Design and implement a smart financial planning framework in which the advice given to the user is tailored to the user's individual life stage.
 
@@ -60,19 +60,26 @@ These seven problems, taken together, explain why the author chose to build a sy
 5. Build forecasting (LSTM-based) and categorization (text classifier) modules that run alongside the LLM.
 6. Evaluate the system on role-appropriateness, context-grounding, action-correctness, latency, and user-visible quality.
 
+**Headline contributions.** Beyond the engineering objectives above, the thesis defends four substantive contributions:
+
+1. *Engineering enablement via QLoRA.* Fine-tuning a 3-billion-parameter instruction model end-to-end is infeasible on a single consumer GPU. By applying QLoRA — rank-16 LoRA adapters (α = 32, dropout = 0.05) trained over a 4-bit NF4 (NormalFloat-4) double-quantized Qwen2.5-3B-Instruct base — only ~0.5% of parameters become trainable, which is what made it feasible to run three full adapter iterations (v6 → v7 → v8) on commodity hardware. Without PEFT, the iterative dataset-evolution methodology would not have been possible.
+2. *Persona-conditioned instruction tuning.* The dataset and system prompt jointly condition the model on three life-stage roles — Student, Worker, Freelancer — addressing a gap in existing financial-LLM work (BloombergGPT, FinGPT, PIXIU), which targets analysts and markets rather than individual users at different life stages.
+3. *Schema-constrained generation as a deployment property.* Because the model drives a real backend (transaction log/edit/delete actions), JSON-schema compliance is treated as a first-class evaluation metric alongside accuracy. A failed parse is not just a quality issue but a deployment-reliability failure, equivalent to a hallucinated tool call.
+4. *3×3 benchmark matrix.* The system is evaluated on three model versions × three retrieval conditions: pre_rag (no retrieval), oracle (synthetic per-case evidence as an upper bound), and vector (live ChromaDB retrieval, identical to the production pipeline). The matrix isolates the contribution of fine-tuning from the contribution of retrieval and provides an oracle-vs-vector ablation that quantifies the headroom remaining in the retrieval layer.
+
 **Tools, techniques, and languages.** The finance and auth services are written in **TypeScript**, running on **Bun 1.1.34** with the **Elysia** HTTP framework and **Drizzle ORM** over **MySQL 8**. The monorepo is managed with **Turborepo**. The frontend is **React 18** with **Vite**, **React Router DOM**, and **TailwindCSS**. Validation is handled by **Zod** on the TypeScript side and **Pydantic** on the Python side. The AI brain is implemented in **Python 3.11/3.12** using **Transformers**, **TRL**, **PEFT** (LoRA/QLoRA), **bitsandbytes** (4-bit quantization), **PyTorch**, **scikit-learn** (for the categorizer), and a small **LSTM** in PyTorch for forecasting. The RAG layer uses **ChromaDB**. API docs are served by **@elysiajs/openapi**. JWT is used for auth. Docker Compose runs MySQL + phpMyAdmin for local development.
 
 **Implementation steps (high level).** (1) Set up monorepo and CI. (2) Build auth service and JWT flow. (3) Build finance CRUD service and schema. (4) Build frontend shell and core pages. (5) Build hybrid dataset generator and train Qwen2.5-3B QLoRA adapter (v1 → v8). (6) Build local FINA Brain HTTP server exposing `/chat` and pulling finance context through the finance service. (7) Integrate the chat path into the frontend via `/api/fina/chat` with role and history. (8) Add forecasting and categorization modules and callback endpoints. (9) Benchmark and iterate.
 
 ### 1.4 Assumption and Solution
 
-**Assumptions.** The system is designed for a single-user personal-use deployment scenario, in which the user runs the web application on a laptop or phone and the FINA Brain on a personal Windows machine with a CUDA-capable consumer GPU (tested on a single RTX-class card with ≥8 GB VRAM). The MySQL databases and the backend services run either on the same machine or on a local network. The user is assumed to be in Vietnam using VND and speaking Vietnamese or English. The user's role (Student, Worker, Freelancer, Parent, Retiree) is set once on the account and can be updated. Transactions are entered manually or logged via chat; automatic bank import is out of scope for this thesis.
+**Assumptions.** The system is designed for a single-user personal-use deployment scenario, in which the user runs the web application on a laptop or phone and the FINA Brain on a personal Windows machine with a CUDA-capable consumer GPU (tested on a single RTX-class card with ≥8 GB VRAM). The MySQL databases and the backend services run either on the same machine or on a local network. The user is assumed to be in Vietnam using VND and speaking Vietnamese or English. The user's role (Student, Worker, Freelancer) is set once on the account and can be updated. Transactions are entered manually or logged via chat; automatic bank import is out of scope for this thesis.
 
 **Solution.** The proposed solution is a hybrid architecture that splits responsibility between three runtimes: a web frontend (`apps/web`) for user interaction, a finance service (`services/finance`) that owns all CRUD and also acts as the gateway to the AI brain, and a local FINA Brain process that owns the fine-tuned model and the retrieval/forecasting/categorization modules. When the user asks a question, the browser sends it to the finance service at `POST /api/fina/chat`; the finance service loads the user's role and recent history from MySQL, forwards the request to FINA on Windows, which assembles numeric context from the finance service's `/api/fina/users/:userId/*` read endpoints, runs the role-aware prompt through the Qwen2.5-3B adapter, validates the JSON, and returns the response; the finance service then optionally executes any CRUD action contained in the response, writes a chat log, and returns the reply to the browser. This architecture keeps private financial data inside the user's own machine(s), keeps the AI model tightly integrated with real numbers, and keeps the action layer safe behind Pydantic + Zod schema validation.
 
 ### 1.5 Structure of Thesis
 
-The remainder of this thesis is organized as follows. Chapter 2 surveys related work on personal finance applications, role-aware advisors, retrieval-augmented LLMs, QLoRA fine-tuning, and transaction categorization. Chapter 3 presents the proposed methodology, including the system architecture, database schema, AI pipeline, dataset format, and algorithms. Chapter 4 documents the implementation details, environment setup, training configuration, and the obtained user-facing results with screen captures. Chapter 5 discusses and evaluates the system compared against the baselines reviewed in Chapter 2. Chapter 6 concludes and outlines future work.
+The remainder of this thesis is organized as follows. Chapter 2 surveys related work on personal finance applications, role-aware advisors, retrieval-augmented LLMs, parameter-efficient fine-tuning (PEFT/LoRA/QLoRA), comparative studies of fine-tuning vs. RAG, and transaction categorization. Chapter 3 presents the proposed methodology, including the system architecture, database schema, AI pipeline, dataset format, training and inference algorithms, the structured-output contract, and the 3×3 evaluation methodology that frames the experiments. Chapter 4 documents the implementation details, environment setup, training configuration, and the obtained user-facing results with screen captures, including the 3×3 benchmark matrix and the oracle-vs-vector retrieval ablation. Chapter 5 discusses and evaluates the system compared against the baselines reviewed in Chapter 2. Chapter 6 concludes and outlines future work.
 
 *Figure 1. Structure of thesis.*
 ```
@@ -220,7 +227,7 @@ The proposed method has five layers, ordered from storage to user experience:
 | UC-ID | Actor | Name | Brief |
 |-------|-------|------|-------|
 | UC-01 | User | Register / Login | Phone + password; returns JWT |
-| UC-02 | User | Set life-stage role | Choose Student / Worker / Freelancer / Parent / Retiree |
+| UC-02 | User | Set life-stage role | Choose Student / Worker / Freelancer |
 | UC-03 | User | CRUD transactions | Add / edit / delete income / expense records |
 | UC-04 | User | CRUD categories | Manage category master data |
 | UC-05 | User | CRUD budgets | Overall, category, and 50/30/20-style budgets |
@@ -268,7 +275,7 @@ accounts
   name            varchar(255)
   type            enum
   currency        varchar(8)        (default VND)
-  role            enum(Student,Worker,Freelancer,Parent,Retiree)
+  role            enum(STUDENT, WORKER, FREELANCER)
   friction_level  enum
   created_at      timestamp
 
@@ -375,7 +382,7 @@ FINA Brain (Python)
 
 ```
 Algorithm: Answer(user_query, user_id, role, history)
-Input : user_query string, user_id, role ∈ {Student,Worker,Freelancer,Parent,Retiree}
+Input : user_query string, user_id, role ∈ {Student, Worker, Freelancer}
 Output: ModelOutput {kind, message, action, signals, needs_clarification}
 
  1. ctx.summary     ← GET /api/fina/users/user_id/summary
@@ -473,6 +480,37 @@ Every LLM response is a JSON object validated by `fina_schema.ModelOutput`:
 ```
 
 The `SYSTEM_PROMPT` in `fina_schema.py` enforces four hard rules: (i) trust pre-computed context, do not recalculate; (ii) never invent numbers, categories, or dates; (iii) prioritize risk signals first; (iv) adapt tone and emphasis to the user's role.
+
+### 3.13 Evaluation Methodology — 3×3 Benchmark Matrix
+
+To attribute system performance to the *fine-tuning* axis and the *retrieval* axis independently, the thesis evaluates FINA on a 3×3 matrix implemented in `benchmark.py`.
+
+**Rows — adapter version (varies the fine-tuning axis with retrieval frozen):**
+
+- *v6* — first dataset revision after the initial seed; baseline for the iterative methodology.
+- *v7* — adds explicit role-conditioning samples and JSON-format reinforcement examples.
+- *v8* — production adapter; adds anti-hallucination negatives, citation grounding examples, and clarification-question patterns. All three adapters share the same base (4-bit NF4 Qwen2.5-3B-Instruct), the same LoRA rank (16) and α (32), and the same target-module set; only the training dataset changes.
+
+**Columns — retrieval condition (varies the retrieval axis with weights frozen):**
+
+- *pre_rag* — the model receives only the system prompt, the pre-computed financial context block, and the user question. No transaction-level evidence is retrieved. This isolates what the fine-tuned weights know on their own.
+- *oracle* — synthetic per-case transactions tailored to the test question are injected directly into the prompt as evidence (`[S1..Sk]`). This represents an upper bound on retrieval quality — what the model would do if retrieval were perfect.
+- *vector* — the same per-case transactions are first indexed into a per-case ChromaDB collection (`bench_<case_id>`) using MiniLM sentence embeddings (the default `chromadb` embedding function), and the user question is then used to retrieve top-k = 3 transactions by semantic similarity. This is a faithful copy of the production pipeline (`rag/store.py` and `rag/retriever.py`); the gap between the *vector* and *oracle* columns therefore measures the headroom remaining in the deployed retrieval layer.
+
+**Metric set.** Each test case produces a per-case verdict; results are aggregated to six headline percentages reported in §4.2:
+
+| Metric | Definition |
+|---|---|
+| `overall_accuracy_pct` | LLM-judged correctness of the response against the case's expected answer. |
+| `financial_accuracy_pct` | Correctness restricted to numeric financial claims (amounts, totals, deltas). |
+| `role_appropriateness_pct` | Whether the tone and recommendations are appropriate for the case's role (Student / Worker / Freelancer). |
+| `citation_correctness_pct` | Whether `[S#]` citations in the response point to evidence that actually supports the claim. |
+| `hallucination_pct` | Fraction of responses containing unsupported numbers, fabricated categories, or invented transactions. |
+| `json_compliance_pct` | Fraction of raw model outputs that pass `parse_model_output()` against the `fina_schema.ModelOutput` Pydantic schema. |
+
+**Why JSON compliance is a first-class metric.** The deployed product dispatches structured actions (transaction `LOG`/`EDIT`/`DELETE`) from the model's JSON output. A response that is semantically correct but fails schema validation cannot be acted on — it is functionally indistinguishable from a hallucinated tool call. Treating `json_compliance_pct` as a primary axis (rather than burying it inside a generic "format errors" bucket) is what lets the thesis report the v6 → v8 progression as a *deployment-reliability* improvement, not just a quality improvement.
+
+**Reproducibility.** The 9 cells of the matrix are produced by 9 invocations of `benchmark.py --adapter financial_qwen_native_v{6,7,8} --rag {none,oracle,vector}`. Each invocation writes a structured log to `logs/benchmark_financial_qwen_native_v{6,7,8}_{pre_rag,oracle,vector}.json` containing the per-case `json_compliant` flag, the per-case verdict for each metric, and the aggregate percentages used in §4.2. The benchmark is deterministic (greedy decoding, `do_sample=False`) so the matrix is regenerable from a fixed seed.
 
 ---
 
@@ -603,7 +641,7 @@ PATCH  /api/fina/logs/:logId/feedback
 ### 4.6 Obtained Results (Screens)
 
 *Figure 4.1 — Login / Register page (Phone + password, JWT returned).*
-*Figure 4.2 — Role selector after first login (Student / Worker / Freelancer / Parent / Retiree).*
+*Figure 4.2 — Role selector after first login (Student / Worker / Freelancer).*
 *Figure 4.3 — Transactions list with category icons and VND amounts.*
 *Figure 4.4 — Budgets editor (overall, per category, and 50/30/20 preferences).*
 *Figure 4.5 — Dashboard: this-month spend, MoM delta, top categories, and LSTM forecast line.*
@@ -670,7 +708,7 @@ BloombergGPT [8] and FinGPT [9] target *market* finance, not *personal* finance,
 3. **Action layer** — 94% of chat actions are directly executable against MySQL with no human intervention.
 4. **Privacy** — the LLM runs on the user's own Windows box; financial data never leaves the personal perimeter.
 5. **Latency** — p50 ≈ 540 ms per chat response on a consumer GPU makes the UX fluid.
-6. **Extensibility** — new roles (e.g., Retiree specialization for healthcare) can be added by adding samples to the `role_specific` family and retraining the adapter (one training iteration per version).
+6. **Extensibility** — additional life-stage roles (beyond the current three) can be added in future work by extending the `role_specific` family in the dataset generator and retraining the adapter (one training iteration per version).
 
 ### 5.4 Limitations
 
@@ -710,10 +748,10 @@ This thesis presented **FINA — Smart Financial Planning Tailored to Individual
 3. **Persistent forecasts.** Move `forecastCache` from in-memory to a `forecasts` MySQL table so forecasts survive restarts and are shareable across replicas.
 4. **Callback security.** Sign FINA callbacks with HMAC so the finance service can accept them over an untrusted network.
 5. **Multi-user households.** Extend the schema to shared family budgets (spouse + children + parent roles in one account group).
-6. **Retiree specialization.** Add dense samples to the `role_specific` family for the Retiree role (healthcare, pension, capital preservation) — currently the role is supported by the system but under-sampled.
+6. **Persona expansion.** Add additional life-stage roles (e.g., Retiree for healthcare and pension planning, Parent for childcare and education-savings planning) by extending the `role_specific` family with dedicated samples and retraining the adapter.
 7. **Speech input.** Add voice-to-text on the chat box so the user can log "I just spent 45k on coffee" while walking.
 8. **On-device inference.** Distill the v8 adapter into a 1-B-parameter student model suitable for phone-local inference, so the Windows brain is not required.
-9. **Evaluation with real users.** Run a field study with ≥30 users across the five roles and compare retention at 30/60/90 days against a generic baseline.
+9. **Evaluation with real users.** Run a field study with ≥30 users across the three roles (Student, Worker, Freelancer) and compare retention at 30/60/90 days against a generic baseline.
 10. **Unify AI services.** Retire the legacy `services/insights` chat path and keep one AI gateway (`services/finance` + FINA Brain).
 
 ---

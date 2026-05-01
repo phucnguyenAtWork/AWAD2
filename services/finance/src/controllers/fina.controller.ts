@@ -559,20 +559,42 @@ export const finaController = new Elysia({ prefix: "/api/fina" })
     }
   )
 
-  // ─── Read cached forecast ─────────────────────────────────────────
+  // ─── Read forecast (cached, or fetch live from FINA on miss) ──────
   .get(
     "/forecast/:userId",
     async ({ params, set }) => {
+      const FRESH_MS = 10 * 60 * 1000; // 10 minutes
       const cached = forecastCache.get(params.userId);
-      if (!cached) {
-        set.status = 404;
-        return { message: "No forecast available. Trigger one via FINA first." };
+      if (cached && Date.now() - cached.cachedAt.getTime() < FRESH_MS) {
+        return cached;
       }
-      return cached;
+
+      try {
+        const live = await fina.forecast(params.userId);
+        const entry = {
+          weekly: live.weekly,
+          monthly: live.monthly,
+          confidence: live.confidence,
+          source: live.source,
+          cachedAt: new Date(),
+        };
+        forecastCache.set(params.userId, entry);
+        return entry;
+      } catch (err) {
+        if (cached) {
+          // Stale cache is better than nothing if FINA is unreachable.
+          return cached;
+        }
+        set.status = 503;
+        return {
+          message: "Forecast unavailable.",
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     },
     {
       params: t.Object({ userId: t.String() }),
-      detail: { tags: ["FINA Integration"], summary: "Get cached forecast for user" },
+      detail: { tags: ["FINA Integration"], summary: "Get forecast for user (lazy-fetch from FINA)" },
     }
   )
 

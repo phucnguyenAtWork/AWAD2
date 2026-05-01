@@ -15,6 +15,7 @@ actor "User" as user
 usecase "Register" as UC_REG
 usecase "Login" as UC_LOGIN
 usecase "View Profile" as UC_PROFILE
+usecase "Set Life-Stage Role\n{Student, Worker, Freelancer}" as UC_ROLE
 
 ' === Account Management ===
 usecase "Manage Accounts" as UC_ACC
@@ -46,6 +47,7 @@ usecase "Delete Chat Log" as UC_DELLOG
 user --> UC_REG
 user --> UC_LOGIN
 user --> UC_PROFILE
+user --> UC_ROLE
 user --> UC_ACC
 user --> UC_CAT
 user --> UC_TXN
@@ -66,5 +68,9 @@ UC_DASH ..> UC_TRENDS : <<include>>
 UC_CHAT ..> UC_NLLOG : <<extend>>
 UC_CHAT ..> UC_NLBUD : <<extend>>
 UC_CHAT ..> UC_NLASK : <<extend>>
+
+UC_REG ..> UC_ROLE : <<include>>
+UC_PROFILE ..> UC_ROLE : <<extend>>
+UC_CHAT ..> UC_ROLE : <<include>>
 
 @enduml

@@ -24,6 +24,7 @@ entity "**accounts**" as accounts {
   * name : VARCHAR(255)
   * type : ENUM {CASH, BANK, WALLET, CREDIT}
   * currency : VARCHAR(8) = 'VND'
+  * role : ENUM {STUDENT, WORKER, FREELANCER}
   * friction_level : ENUM {HIGH, MEDIUM, LOW}
   created_at : TIMESTAMP
 }

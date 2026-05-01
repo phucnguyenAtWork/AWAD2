@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gte, lte } from "drizzle-orm";
 import { db } from "../db";
 import { transactions } from "../schemas/transactions.schema";
 import type { InferSelectModel } from "drizzle-orm";
@@ -79,4 +79,35 @@ export const deleteTransaction = async (id: string) => {
   if (!record) return null;
   await db.delete(transactions).where(eq(transactions.id, id));
   return record;
+};
+
+export const deleteTransactionsRange = async (
+  userId: string,
+  from: Date,
+  to: Date
+) => {
+  const matched = await db
+    .select()
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.userId, userId),
+        gte(transactions.occurredAt, from),
+        lte(transactions.occurredAt, to)
+      )
+    );
+  if (matched.length === 0) return { count: 0, totalAmount: 0, deleted: [] as Transaction[] };
+
+  await db
+    .delete(transactions)
+    .where(
+      and(
+        eq(transactions.userId, userId),
+        gte(transactions.occurredAt, from),
+        lte(transactions.occurredAt, to)
+      )
+    );
+
+  const totalAmount = matched.reduce((s, t) => s + Number(t.amount || 0), 0);
+  return { count: matched.length, totalAmount, deleted: matched };
 };

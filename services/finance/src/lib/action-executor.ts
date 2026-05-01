@@ -21,6 +21,7 @@ export type ActionIntent =
   | "update_transaction"
   | "update_budget"
   | "delete_transaction"
+  | "delete_transactions_range"
   | "delete_budget"
   | "list_transactions"
   | "list_budgets"
@@ -70,6 +71,39 @@ async function resolveCategoryId(
   if (partial) return partial.id;
 
   return null;
+}
+
+/**
+ * Guarantees a non-Uncategorized category for a logged transaction.
+ *   1. If a name is supplied, try resolving it directly.
+ *   2. Otherwise (or if step 1 misses), run the keyword map over every
+ *      free-text hint we have (model-supplied category, item, raw prompt).
+ *   3. As a last resort, fall back to the account's "Other" category.
+ *      "Uncategorized" is explicitly skipped so logs never land there.
+ */
+async function resolveCategoryIdOrDefault(
+  hints: { categoryName?: string | null; item?: string | null; prompt?: string | null },
+  accountId: string | null
+): Promise<string | null> {
+  if (!accountId) return null;
+
+  if (hints.categoryName) {
+    const direct = await resolveCategoryId(hints.categoryName, accountId);
+    if (direct) {
+      const [row] = await db.select().from(categories).where(eq(categories.id, direct)).limit(1);
+      if (row && row.name.toLowerCase() !== "uncategorized") return direct;
+    }
+  }
+
+  const blob = [hints.categoryName, hints.item, hints.prompt].filter(Boolean).join(" ");
+  const keywordHit = blob ? detectCategory(blob) : null;
+  if (keywordHit) {
+    const id = await resolveCategoryId(keywordHit, accountId);
+    if (id) return id;
+  }
+
+  const fallback = await resolveCategoryId("Other", accountId);
+  return fallback;
 }
 
 async function getLastTransaction(userId: string) {
@@ -221,6 +255,17 @@ const DELETE_TX_PATTERNS = [
   /\b(?:xóa|hủy|bỏ)\b.*\b(?:giao dịch|chi tiêu)\b/i,
 ];
 
+// DELETE-RANGE patterns — bulk delete by month/last-month/explicit range.
+// Checked BEFORE single-row delete so "remove all transactions from last month"
+// dispatches to a real batch delete instead of nuking one row and lying about it.
+const DELETE_RANGE_PATTERNS = [
+  /\b(?:delete|remove|clear|wipe)\b.*\b(?:all|every|everything)\b.*\btransactions?\b/i,
+  /\b(?:delete|remove|clear)\b.*\btransactions?\b.*\b(?:from|between|in)\b/i,
+  /\b(?:delete|remove|clear)\b.*\b(?:last|previous|prior|past|this|current)\s+month\b/i,
+  /\b(?:xóa|hủy|bỏ)\b.*\b(?:tất cả|toàn bộ)\b.*\b(?:giao dịch|chi tiêu)\b/i,
+  /\b(?:xóa|hủy|bỏ)\b.*\btháng\s+(?:trước|này|vừa\s+rồi|vừa\s+qua|rồi|hiện\s+tại)\b/i,
+];
+
 const DELETE_BUDGET_PATTERNS = [
   /\b(?:delete|remove|cancel)\b.*\bbudget\b/i,
   /\b(?:xóa|hủy|bỏ)\b.*\b(?:ngân sách|budget)\b/i,
@@ -234,11 +279,89 @@ const QUESTION_PATTERNS = [
   /^who\b/i, /^where\b/i, /^when\b/i, /^why\b/i,
 ];
 
+// ─── Date-range parsing ─────────────────────────────────────────────
+
+function startOfDay(d: Date): Date {
+  const x = new Date(d); x.setHours(0, 0, 0, 0); return x;
+}
+function endOfDay(d: Date): Date {
+  const x = new Date(d); x.setHours(23, 59, 59, 999); return x;
+}
+
+/**
+ * Returns [from, to] inclusive based on the prompt, or null if no range
+ * could be inferred. Supports "last month" / "this month", explicit
+ * "MM/DD/YYYY to MM/DD/YYYY" (also dashes / VN "đến" / "tới"), and
+ * "in <Month> [Year]". Falls back to DD/MM if MM/DD parses to an invalid
+ * or inverted range.
+ */
+function parseDateRange(prompt: string, now = new Date()): { from: Date; to: Date } | null {
+  const p = prompt.toLowerCase();
+
+  // "last month" synonyms (EN + VN). Covers: last/previous/prior month,
+  // "the month before", "month prior", "tháng trước/vừa rồi/vừa qua/rồi".
+  if (
+    /\b(?:last|previous|prior|past)\s+month\b/.test(p) ||
+    /\bthe\s+month\s+(?:before|prior)\b/.test(p) ||
+    /\bmonth\s+(?:before|prior)\b/.test(p) ||
+    /\btháng\s+(?:trước|vừa\s+rồi|vừa\s+qua|rồi)\b/.test(p)
+  ) {
+    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const to = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { from: startOfDay(from), to: endOfDay(to) };
+  }
+
+  // "this month" synonyms (EN + VN). Covers: this/current/the current month,
+  // "so far this month", "tháng này/hiện tại/hiện nay".
+  if (
+    /\b(?:this|current)\s+month\b/.test(p) ||
+    /\bthe\s+current\s+month\b/.test(p) ||
+    /\btháng\s+(?:này|hiện\s+tại|hiện\s+nay)\b/.test(p)
+  ) {
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { from: startOfDay(from), to: endOfDay(to) };
+  }
+
+  const explicit = prompt.match(
+    /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\s*(?:[-–to]+|đến|tới)\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/i
+  );
+  if (explicit) {
+    const [, a1, a2, ay, b1, b2, by] = explicit;
+    const tryParse = (m: string, d: string, y: string) => {
+      const dt = new Date(Number(y), Number(m) - 1, Number(d));
+      return isNaN(dt.getTime()) || dt.getMonth() !== Number(m) - 1 ? null : dt;
+    };
+    let from = tryParse(a1!, a2!, ay!);
+    let to = tryParse(b1!, b2!, by!);
+    if (!from || !to || from > to) {
+      from = tryParse(a2!, a1!, ay!);
+      to = tryParse(b2!, b1!, by!);
+    }
+    if (from && to && from <= to) return { from: startOfDay(from), to: endOfDay(to) };
+  }
+
+  const months = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+  const monthMatch = p.match(/\b(?:in|during)\s+(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?/i);
+  if (monthMatch) {
+    const m = months.indexOf(monthMatch[1]!.toLowerCase());
+    const y = monthMatch[2] ? Number(monthMatch[2]) : now.getFullYear();
+    const from = new Date(y, m, 1);
+    const to = new Date(y, m + 1, 0);
+    return { from: startOfDay(from), to: endOfDay(to) };
+  }
+
+  return null;
+}
+
 function detectIntent(userPrompt: string): ActionIntent {
   const p = userPrompt.trim();
 
   // Questions never trigger actions
   if (QUESTION_PATTERNS.some((re) => re.test(p))) return null;
+
+  // Delete-range — check BEFORE single delete so bulk wording dispatches to batch.
+  if (DELETE_RANGE_PATTERNS.some((re) => re.test(p))) return "delete_transactions_range";
 
   // Delete — check before create (e.g. "delete last transaction")
   if (DELETE_TX_PATTERNS.some((re) => re.test(p))) return "delete_transaction";
@@ -321,9 +444,10 @@ export async function executeFromPrompt(
 
         const txType = isIncomeIntent(userPrompt) ? "INCOME" : "EXPENSE";
         const categoryName = detectCategory(userPrompt);
-        const categoryId = categoryName && accountId
-          ? await resolveCategoryId(categoryName, accountId)
-          : null;
+        const categoryId = await resolveCategoryIdOrDefault(
+          { categoryName, prompt: userPrompt },
+          accountId
+        );
 
         const description = extractDescription(userPrompt);
 
@@ -339,6 +463,10 @@ export async function executeFromPrompt(
           occurredAt: new Date().toISOString(),
         });
 
+        const resolvedName = record.categoryId
+          ? (await db.select().from(categories).where(eq(categories.id, record.categoryId)).limit(1))[0]?.name
+          : null;
+
         return {
           type: "create_transaction",
           success: true,
@@ -349,7 +477,7 @@ export async function executeFromPrompt(
             currency: record.currency,
             description: record.description,
             categoryId: record.categoryId,
-            categoryName: categoryName ?? "Other",
+            categoryName: resolvedName ?? categoryName ?? "Other",
             occurredAt: record.occurredAt,
           },
         };
@@ -500,6 +628,29 @@ export async function executeFromPrompt(
         };
       }
 
+      // ── DELETE TRANSACTIONS IN A DATE RANGE ─────────────────────
+      case "delete_transactions_range": {
+        const range = parseDateRange(userPrompt);
+        if (!range) {
+          return {
+            type: "delete_transactions_range",
+            success: false,
+            error: "Could not parse a date range. Try 'last month' or 'from 03/01/2026 to 03/31/2026'.",
+          };
+        }
+        const result = await TransactionsService.deleteRange(userId, range.from, range.to);
+        return {
+          type: "delete_transactions_range",
+          success: true,
+          record: {
+            from: range.from.toISOString(),
+            to: range.to.toISOString(),
+            count: result.count,
+            totalAmount: result.totalAmount,
+          },
+        };
+      }
+
       // ── DELETE BUDGET ───────────────────────────────────────────
       case "delete_budget": {
         const lastBudget = await getLastBudget(userId);
@@ -532,9 +683,11 @@ const ACTION_TYPE_MAP: Record<string, ActionIntent> = {
   LOG_INCOME: "create_transaction",
   UPDATE_TRANSACTION: "update_transaction",
   DELETE_TRANSACTION: "delete_transaction",
+  DELETE_TRANSACTIONS_RANGE: "delete_transactions_range",
   create_transaction: "create_transaction",
   update_transaction: "update_transaction",
   delete_transaction: "delete_transaction",
+  delete_transactions_range: "delete_transactions_range",
   create_budget: "create_budget",
   update_budget: "update_budget",
   delete_budget: "delete_budget",
@@ -559,7 +712,10 @@ export async function executeFromAction(
       case "create_transaction": {
         if (!amount) return { type: "create_transaction", success: false, error: "amount required" };
         const txType = rawType === "LOG_INCOME" ? "INCOME" : "EXPENSE";
-        const categoryId = categoryName ? await resolveCategoryId(categoryName, accountId) : null;
+        const categoryId = await resolveCategoryIdOrDefault(
+          { categoryName, item },
+          accountId
+        );
         const record = await TransactionsService.create({
           userId,
           type: txType,
@@ -571,13 +727,16 @@ export async function executeFromAction(
           tags: null,
           occurredAt: new Date().toISOString(),
         });
+        const resolvedName = record.categoryId
+          ? (await db.select().from(categories).where(eq(categories.id, record.categoryId)).limit(1))[0]?.name
+          : null;
         return {
           type: "create_transaction",
           success: true,
           record: {
             id: record.id, type: record.type, amount: record.amount,
             currency: record.currency, description: record.description,
-            categoryId: record.categoryId, categoryName: categoryName ?? "Other",
+            categoryId: record.categoryId, categoryName: resolvedName ?? categoryName ?? "Other",
             occurredAt: record.occurredAt,
           },
         };
@@ -689,6 +848,44 @@ export async function executeFromAction(
           type: "delete_transaction",
           success: true,
           record: { id: target.id, type: target.type, amount: target.amount, description: target.description },
+        };
+      }
+
+      case "delete_transactions_range": {
+        // FINA may emit explicit ISO dates (preferred) or a free-text "range_text"
+        // (e.g. "last month") that we run through parseDateRange().
+        let from: Date | null = null;
+        let to: Date | null = null;
+
+        if (typeof args.from === "string" && typeof args.to === "string") {
+          const f = new Date(args.from);
+          const t = new Date(args.to);
+          if (!isNaN(f.getTime()) && !isNaN(t.getTime()) && f <= t) {
+            from = startOfDay(f); to = endOfDay(t);
+          }
+        }
+        if ((!from || !to) && typeof args.range_text === "string") {
+          const parsed = parseDateRange(args.range_text);
+          if (parsed) { from = parsed.from; to = parsed.to; }
+        }
+        if (!from || !to) {
+          return {
+            type: "delete_transactions_range",
+            success: false,
+            error: "Range required: provide from + to ISO dates or a parseable range_text.",
+          };
+        }
+
+        const result = await TransactionsService.deleteRange(userId, from, to);
+        return {
+          type: "delete_transactions_range",
+          success: true,
+          record: {
+            from: from.toISOString(),
+            to: to.toISOString(),
+            count: result.count,
+            totalAmount: result.totalAmount,
+          },
         };
       }
 

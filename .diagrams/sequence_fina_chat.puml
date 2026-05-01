@@ -1,0 +1,122 @@
+@startuml FINA Chat Workflow Sequence
+
+skinparam responseMessageBelowArrow true
+skinparam sequenceArrowThickness 1.5
+skinparam roundcorner 8
+skinparam maxMessageSize 220
+
+actor "User\n(role ∈ {Student, Worker, Freelancer})" as user
+participant "React\nChatPage" as fe #E3F2FD
+participant "Finance Service\n(Bun/Elysia)\nport 4001" as fin #C8E6C9
+participant "FINA Brain\n(FastAPI api.py)\nport 8105" as api #FFCC80
+participant "make_context\n(api.py)" as ctx #FFE0B2
+participant "RAG Retriever\n(rag.retriever)" as rag #F8BBD0
+participant "ChromaDB\n(per-user collection)" as chroma #FCE4EC
+participant "LSTM Forecaster" as lstm #B3E5FC
+participant "Qwen2.5-3B\n+ LoRA v8" as qwen #FFCDD2
+participant "parse_model_output\n(fina_schema)" as parse #FFF9C4
+database "MySQL\nfinance DB" as db #FFF3E0
+database "MySQL\ninsights DB\n(chat_logs)" as logs #F5F5F5
+
+user -> fe : Type message:\n"Can I afford a 15M VND laptop this month?"
+activate fe
+
+fe -> fin : POST /api/insights/chat\n{prompt, user_id, displayCurrency}
+activate fin
+
+== Phase 1: Resolve role and context ==
+
+fin -> db : SELECT role, currency FROM accounts\nWHERE user_id = ?
+activate db
+db --> fin : role = Student
+deactivate db
+
+fin -> api : POST /chat\n{user_id, role, prompt, history}
+activate api
+
+api -> ctx : make_context(user_id)
+activate ctx
+ctx -> fin : GET /api/fina/users/{id}/summary
+ctx -> fin : GET /api/fina/users/{id}/spending/daily
+ctx -> fin : GET /api/fina/users/{id}/spending/monthly-history
+ctx -> fin : GET /api/fina/users/{id}/category-budgets
+fin -> db : SELECT income, transactions, budgets, history
+db --> fin : aggregates
+fin --> ctx : structured context blocks
+ctx -> ctx : compute totals, savings rate,\ntop category, anomalies,\nbudget verdicts
+ctx -> lstm : predict(daily) → forecast
+lstm --> ctx : projected total + confidence
+ctx --> api : FINANCIAL CONTEXT (string)
+deactivate ctx
+
+== Phase 2: Vector retrieval (RAG) ==
+
+api -> rag : retrieve_context_with_sources(\n  user_id, prompt, top_k=4)
+activate rag
+rag -> fin : GET /api/fina/users/{id}/transactions
+fin -> db : SELECT * FROM transactions
+db --> fin : transactions[]
+fin --> rag : transactions[]
+rag -> chroma : signature(transactions)
+alt signature changed
+  rag -> chroma : upsert_transactions(user_id, txs, formatter)
+end
+rag -> chroma : query(user_id, prompt, top_k=4)
+chroma --> rag : top-k docs + scores
+rag --> api : RetrievalResult\n{context, sources: [S1..S4]}
+deactivate rag
+
+== Phase 3: Prompt assembly ==
+
+api -> api : build chat template:\n  SYSTEM_PROMPT (role-aware)\n+ FINANCIAL CONTEXT\n+ RETRIEVED EVIDENCE [S1..S4]\n+ history (last 10)\n+ directive (JSON-only)\n+ user prompt
+
+== Phase 4: Generate ==
+
+api -> qwen : generate(prompt,\n  max_new_tokens=512,\n  do_sample=False,\n  pad_token_id=eos)
+activate qwen
+qwen --> api : raw text
+deactivate qwen
+
+== Phase 5: Validate JSON ==
+
+api -> parse : parse_model_output(raw)
+activate parse
+alt valid JSON matches ModelOutput schema
+  parse --> api : ModelOutput\n{kind, message, action,\n signals, needs_clarification}
+else parse failure
+  parse -> parse : fallback_output(raw)
+  parse --> api : ModelOutput\n(json_compliant=false)
+end
+deactivate parse
+
+== Phase 6: Role-guard + action dispatch ==
+
+alt parsed.kind == ACTION
+  api -> api : role_guard(action, role)
+  alt guard passes
+    api -> fin : POST /api/fina/transactions\n(if action.type ∈ {LOG, EDIT, DELETE})
+    fin -> db : INSERT/UPDATE/DELETE
+    db --> fin : ok
+    fin --> api : action result
+  else guard fails
+    api -> api : convert to clarification\n"I need one more detail before I log that."
+  end
+end
+
+== Phase 7: Log and respond ==
+
+api --> fin : ChatResponse\n{response, sources, json_compliant,\n latency_ms, request_id}
+deactivate api
+
+fin -> logs : INSERT INTO chat_logs\n(user_query, ai_response,\n context_snapshot, action,\n model_name=v8, latency_ms,\n request_id)
+activate logs
+logs --> fin : saved
+deactivate logs
+
+fin --> fe : 200 {response, log, request_id}
+deactivate fin
+
+fe --> user : Render message + citations [S1..S4]\n+ action confirmation (if any)\n+ latency badge
+deactivate fe
+
+@enduml

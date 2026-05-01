@@ -1,27 +1,35 @@
-  @startuml SmartFinance Architecture
+@startuml SmartFinance Architecture (FINA Branch)
 
-  skinparam component {
-    BackgroundColor #FAFAFA
-    BorderColor #37474F
-  }
-  skinparam node {
-    BackgroundColor #E3F2FD
-    BorderColor #1565C0
-  }
-  skinparam database {
-    BackgroundColor #FFFDE7
-    BorderColor #5D4037
-  }
-  skinparam cloud {
-    BackgroundColor #F3E5F5
-    BorderColor #6A1B9A
-  }
+skinparam component {
+  BackgroundColor #FAFAFA
+  BorderColor #37474F
+}
+skinparam node {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+}
+skinparam database {
+  BackgroundColor #FFFDE7
+  BorderColor #5D4037
+}
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #37474F
+}
 
-  node "Client Browser" {
+title SmartFinance — llm-local-agent-feature branch (FINA, no Gemini)
+
+' ============================================================
+'  Mac host (developer / web + API tier) — Tailscale 100.x.y.z
+' ============================================================
+
+node "Mac host\n(Tailscale 100.x.y.z)" as mac_host #E8F5E9 {
+
+  package "Client Browser" {
     [React SPA\n(Vite + TailwindCSS)\nport 5173] as frontend
   }
 
-  node "Bun Runtime" {
+  package "Bun Runtime" {
     package "Auth Service\nport 4002" as auth_svc {
       [Auth Controller] as auth_ctrl
       [Auth Service] as auth_biz
@@ -29,35 +37,21 @@
       [Rate Limiter] as rate_lim
     }
 
-    package "Finance Service\nport 4001" as fin_svc {
-      [Accounts Controller] as acc_ctrl
-      [Categories Controller] as cat_ctrl
-      [Transactions Controller] as txn_ctrl
-      [Budgets Controller] as bud_ctrl
+    package "Finance Service (FINA hub)\nport 4001" as fin_svc {
+      [Accounts / Categories / Txn / Budgets\nControllers] as crud_ctrl
+      [FINA Controller\n/api/fina/*] as fina_ctrl
+      [FINA Client\n(httpx → Tailscale)] as fina_client
+      [Action Executor\n(LOG / EDIT / DELETE)] as action_exec
       [Services Layer] as fin_biz
       [Repositories Layer] as fin_repo
     }
 
-    package "Insights Service (TS)\nport 4003" as ins_svc {
-      [Chat Controller] as chat_ctrl
-      [Chat Service\n(TS RAG)] as chat_biz
-      [Model Client] as model_client
-      [ChatLogs Repository] as chat_repo
+    package "Insights Service (legacy, unused on this branch)\nport 4003" as ins_svc #ECEFF1 {
+      [Chat Controller (legacy)] as chat_ctrl
     }
   }
 
-  node "Python Runtime" {
-    package "RAG Pipeline (FastAPI)\nport 4004" as rag_svc {
-      [FastAPI Router] as rag_router
-      [Chat Service\n(Python RAG)] as rag_chat
-      [Context Builder\n(TTL Cache)] as rag_ctx
-      [Action Parser\n(Pydantic)] as rag_action
-      [Finance Client\n(httpx)] as rag_fin
-      [Model Client\n(Gemini)] as rag_model
-    }
-  }
-
-  node "Docker Compose" {
+  package "Docker Compose" {
     database "MySQL Server" as mysql {
       [auth] as auth_db
       [finance] as fin_db
@@ -65,60 +59,94 @@
     }
     [phpMyAdmin\nport 8080] as pma
   }
+}
 
-  cloud "Google Cloud" {
-    [Gemini 2.5\nFlash Lite API] as gemini
+' ============================================================
+'  Windows host (GPU) — Tailscale 100.126.232.108
+' ============================================================
+
+node "Windows host (GPU)\nTailscale 100.126.232.108" as win_host #FFF3E0 {
+
+  package "FINA Brain\n(FastAPI api.py)\nport 8105" as fina_brain {
+    [FastAPI Router\n/chat /dashboard /logs] as fina_api
+    [make_context\n(role-aware)] as fina_ctx
+    [RAG Retriever\n(rag.retriever)] as fina_rag
+    database "ChromaDB\n(per-user collection)" as chroma
+    [LSTM Forecaster] as lstm
+    [Qwen2.5-3B + LoRA v8\n(local inference)] as qwen
+    [parse_model_output\n(fina_schema)] as fina_parse
+    [role_guard\n+ action dispatch] as fina_guard
   }
+}
 
-  ' --- Frontend connections ---
-  frontend --> auth_ctrl : "HTTP REST\n(login/register)"
-  frontend --> acc_ctrl : "HTTP REST\n(CRUD)"
-  frontend --> cat_ctrl : "HTTP REST"
-  frontend --> txn_ctrl : "HTTP REST"
-  frontend --> bud_ctrl : "HTTP REST"
-  frontend --> rag_router : "HTTP REST\n(chat/logs)\nport 4004"
+' ============================================================
+'  Frontend connections (intra-Mac, localhost / vite proxy)
+' ============================================================
 
-  ' --- Auth internal ---
-  auth_ctrl --> auth_biz
-  auth_biz --> auth_repo
-  auth_repo --> auth_db
-  auth_ctrl --> rate_lim
+frontend --> auth_ctrl   : "HTTP\nlogin / register"
+frontend --> crud_ctrl   : "HTTP REST\naccounts/categories/\ntxn/budgets"
+frontend --> fina_ctrl   : "HTTP\nPOST /api/fina/chat\nGET  /api/fina/dashboard\nGET  /api/fina/logs\nPATCH /api/fina/logs/:id/feedback"
 
-  ' --- Finance internal ---
-  acc_ctrl --> fin_biz
-  cat_ctrl --> fin_biz
-  txn_ctrl --> fin_biz
-  bud_ctrl --> fin_biz
-  fin_biz --> fin_repo
-  fin_repo --> fin_db
+' ============================================================
+'  Auth / Finance internals
+' ============================================================
 
-  ' --- Insights TS internal ---
-  chat_ctrl --> chat_biz
-  chat_biz --> chat_repo
-  chat_biz --> model_client
-  chat_repo --> ins_db
-  model_client --> gemini : "HTTPS"
+auth_ctrl --> auth_biz
+auth_biz  --> auth_repo
+auth_repo --> auth_db
+auth_ctrl --> rate_lim
 
-  ' --- RAG Pipeline (Python) internal ---
-  rag_router --> rag_chat
-  rag_chat --> rag_ctx : "build + cache context"
-  rag_chat --> rag_action : "parse + validate"
-  rag_ctx --> rag_fin
-  rag_chat --> rag_model
-  rag_model --> gemini : "HTTPS\n(generateContent)"
-  rag_chat --> ins_db : "aiomysql\n(chat_logs)"
+crud_ctrl --> fin_biz
+fina_ctrl --> fin_biz
+fina_ctrl --> fina_client
+fina_ctrl --> action_exec
+action_exec --> fin_repo
+fin_biz   --> fin_repo
+fin_repo  --> fin_db
+fina_ctrl --> ins_db : "INSERT chat_logs\n(separate pool)"
 
-  ' --- RAG cross-service ---
-  rag_fin --> acc_ctrl : "HTTP GET\n(RAG context)"
-  rag_fin --> txn_ctrl : "HTTP GET/POST\n(context + action)"
-  rag_fin --> cat_ctrl : "HTTP GET/POST"
-  rag_fin --> bud_ctrl : "HTTP GET/POST"
+' ============================================================
+'  Cross-host link over Tailscale
+' ============================================================
 
-  ' --- TS cross-service (legacy) ---
-  chat_biz ..> acc_ctrl : "HTTP GET\n(RAG context)"
-  chat_biz ..> txn_ctrl : "HTTP POST\n(action exec)"
+fina_client -[#1565C0,thickness=2]-> fina_api : "HTTPS over Tailscale\nPOST /chat\nGET  /dashboard\nGET  /logs\nFINA_API_URL=\nhttp://100.126.232.108:8105"
 
-  ' --- phpMyAdmin ---
-  pma --> mysql
+fina_api -[#1565C0,thickness=2,dashed]-> fina_ctrl : "Callbacks over Tailscale\nGET  /api/fina/users/:id/summary\nGET  /api/fina/users/:id/transactions\nGET  /api/fina/users/:id/spending/daily\nGET  /api/fina/users/:id/spending/monthly-history\nGET  /api/fina/users/:id/category-budgets\nPOST /api/fina/callbacks/categorized\nPOST /api/fina/callbacks/forecast/:id"
 
-  @enduml
+' ============================================================
+'  FINA Brain internals (Windows)
+' ============================================================
+
+fina_api  --> fina_ctx
+fina_api  --> fina_rag
+fina_ctx  --> lstm     : "predict(daily) → forecast"
+fina_rag  --> chroma   : "upsert + query top-k"
+fina_api  --> qwen     : "generate(prompt)"
+fina_api  --> fina_parse
+fina_api  --> fina_guard
+
+' ============================================================
+'  phpMyAdmin
+' ============================================================
+
+pma --> mysql
+
+' ============================================================
+'  Notes
+' ============================================================
+
+note bottom of ins_svc
+  Legacy Insights service (TS RAG + Gemini)
+  is no longer on the user-facing chat path.
+  Frontend now hits Finance /api/fina/chat,
+  which proxies to FINA Brain on Windows.
+end note
+
+note right of fina_brain
+  All AI runs locally:
+  • Qwen2.5-3B + LoRA v8 (no Gemini)
+  • ChromaDB for per-user RAG
+  • LSTM for spending forecast
+end note
+
+@enduml

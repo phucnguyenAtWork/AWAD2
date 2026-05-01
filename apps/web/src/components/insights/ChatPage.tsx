@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../common/Card';
 import { useAuth } from '../auth/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { insightsService, type InsightLog, type ActionResult, type HistoryMessage } from '../../services/insights';
+import { insightsService, type InsightLog, type ActionResult, type HistoryMessage, type ForecastResponse } from '../../services/insights';
 import { financeService } from '../../services/finance';
 import type { Transaction } from '../../services/types';
 
@@ -16,6 +16,8 @@ export function ChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -33,6 +35,16 @@ export function ChatPage() {
       .then(setTransactions)
       .catch(() => {/* non-critical: sidebar will just be empty */});
   }, [token, logout]);
+
+  useEffect(() => {
+    if (!token || !accountId) return;
+    setForecastLoading(true);
+    void insightsService
+      .getForecast(token, accountId, { onUnauthorized: logout })
+      .then(setForecast)
+      .catch(() => setForecast(null))
+      .finally(() => setForecastLoading(false));
+  }, [token, accountId, logout]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -185,6 +197,15 @@ export function ChatPage() {
         return `Budget updated${r.amountLimit ? `: ${fmtAmt(r.amountLimit)}` : ''}`;
       case 'delete_transaction':
         return `Transaction deleted${r.amount ? `: ${fmtAmt(r.amount)}` : ''}`;
+      case 'delete_transactions_range': {
+        const count = Number(r.count ?? 0);
+        const total = fmtAmt(r.totalAmount);
+        const fromStr = r.from ? new Date(r.from as string).toLocaleDateString('vi-VN') : '';
+        const toStr = r.to ? new Date(r.to as string).toLocaleDateString('vi-VN') : '';
+        const range = fromStr && toStr ? ` from ${fromStr} to ${toStr}` : '';
+        if (count === 0) return `No transactions found${range} — nothing was deleted`;
+        return `Deleted ${count} transaction${count === 1 ? '' : 's'}${range}${total ? ` (total ${total})` : ''}`;
+      }
       case 'delete_budget':
         return `Budget deleted`;
       default:
@@ -370,6 +391,79 @@ export function ChatPage() {
 
         {/* ── Right: This-month summary ── */}
         <div className="space-y-4">
+          {/* LSTM Forecast card */}
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-semibold text-slate-900">Next month projection</h3>
+                <p className="text-xs text-slate-400">
+                  {forecast?.source === 'lstm'
+                    ? 'LSTM forecast from your spending history'
+                    : forecast?.source === 'fallback'
+                      ? 'Heuristic estimate (no LSTM trained yet)'
+                      : 'Live from FINA Brain'}
+                </p>
+              </div>
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 13l4 4L21 3M3 21h18" />
+                </svg>
+              </div>
+            </div>
+
+            {forecastLoading && !forecast ? (
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400 text-center">
+                Loading forecast…
+              </div>
+            ) : forecast ? (
+              <>
+                <div className="mb-3">
+                  <p className="text-xs font-medium text-slate-500">Projected spend</p>
+                  <p className="text-2xl font-bold text-purple-600">
+                    {formatPrice(forecast.monthly?.total ?? 0)}
+                  </p>
+                </div>
+
+                <div className="mb-3">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
+                    <span>Confidence</span>
+                    <span className="font-semibold text-slate-700">{forecast.confidence}%</span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className={`h-full ${forecast.confidence >= 75 ? 'bg-emerald-500' : forecast.confidence >= 55 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                      style={{ width: `${Math.min(100, Math.max(0, forecast.confidence))}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-purple-100 bg-purple-50/60 px-3 py-2">
+                  <span className="text-xs font-medium text-slate-600">Weekly average</span>
+                  <span className="text-sm font-semibold text-purple-700">{formatPrice(forecast.weekly?.total ?? 0)}</span>
+                </div>
+
+                {forecast.monthly?.by_category && Object.keys(forecast.monthly.by_category).length > 0 && (
+                  <div className="mt-3 space-y-1">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Top projected categories</p>
+                    {Object.entries(forecast.monthly.by_category)
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(0, 3)
+                      .map(([cat, amt]) => (
+                        <div key={cat} className="flex items-center justify-between text-xs">
+                          <span className="text-slate-600 truncate">{cat}</span>
+                          <span className="font-medium text-slate-700">{formatPrice(amt)}</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-400 text-center">
+                Forecast unavailable. Add more transactions or train an LSTM model for this user.
+              </div>
+            )}
+          </Card>
+
           <Card className="p-5">
             <div className="flex items-center justify-between mb-4">
               <div>

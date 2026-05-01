@@ -1,4 +1,4 @@
-@startuml SmartFinance Database Schema
+@startuml SmartFinance Database Schema (FINA Branch)
 
 !define TABLE(x) entity x << (T,#FFAAAA) >>
 !define PK(x) <b><u>x</u></b>
@@ -10,6 +10,8 @@ skinparam entity {
   BorderColor #5D4037
   ArrowColor #5D4037
 }
+
+title SmartFinance schema — llm-local-agent-feature branch
 
 ' ============================================================
 '  auth database
@@ -42,6 +44,7 @@ package "Database: finance" #E8F5E9 {
     name : VARCHAR(255) NOT NULL
     type : ENUM('CASH','BANK','WALLET','CREDIT') DEFAULT 'CASH'
     currency : VARCHAR(8) DEFAULT 'VND'
+    role : ENUM('STUDENT','WORKER','FREELANCER')
     friction_level : ENUM('HIGH','MEDIUM','LOW') DEFAULT 'LOW'
     created_at : TIMESTAMP DEFAULT NOW()
   }
@@ -65,7 +68,7 @@ package "Database: finance" #E8F5E9 {
     currency : VARCHAR(8) DEFAULT 'VND'
     description : VARCHAR(512)
     FK(category_id) : VARCHAR(36)
-    essential : BOOLEAN DEFAULT FALSE
+    essential : BOOLEAN NULL
     tags : JSON
     occurred_at : DATETIME DEFAULT NOW()
   }
@@ -83,6 +86,26 @@ package "Database: finance" #E8F5E9 {
     created_at : TIMESTAMP DEFAULT NOW()
   }
 
+  TABLE(budget_preferences) {
+    PK(user_id) : VARCHAR(36)
+    --
+    needs_pct : DECIMAL(5,2) DEFAULT 50.00
+    wants_pct : DECIMAL(5,2) DEFAULT 30.00
+    savings_pct : DECIMAL(5,2) DEFAULT 20.00
+    updated_at : TIMESTAMP DEFAULT NOW()
+  }
+
+  TABLE(category_budgets) {
+    PK(id) : VARCHAR(36) [UUID]
+    --
+    FK(user_id) : VARCHAR(36) NOT NULL
+    FK(category_id) : VARCHAR(36) NOT NULL
+    monthly_limit : DECIMAL(14,2) NOT NULL
+    created_at : TIMESTAMP DEFAULT NOW()
+    --
+    UNIQUE (user_id, category_id)
+  }
+
 }
 
 ' ============================================================
@@ -94,16 +117,17 @@ package "Database: insights" #FFF3E0 {
   TABLE(chat_logs) {
     PK(id) : BIGINT AUTO_INCREMENT
     --
-    FK(account_id) : CHAR(36) NOT NULL
+    FK(user_id) : CHAR(36) NOT NULL
     user_query : TEXT
     ai_response : TEXT
     context_snapshot : JSON
     action : JSON
-    model_name : VARCHAR(64)
+    model_name : VARCHAR(64)  '' fina-qwen2.5-3b-lora-v8 ''
     latency_ms : INT
     prompt_tokens : INT
     response_tokens : INT
     request_id : VARCHAR(36)
+    feedback : ENUM('UP','DOWN') NULL
     timestamp : TIMESTAMP DEFAULT NOW()
   }
 
@@ -113,14 +137,29 @@ package "Database: insights" #FFF3E0 {
 '  Relationships with cardinality
 ' ============================================================
 
-auth_users ||--o{ accounts : "1 owns N\n(user_id)"
-auth_users ||--o{ transactions : "1 records N\n(user_id)"
-auth_users ||--o{ chat_logs : "1 logs N\n(account_id)"
+auth_users  ||--o{ accounts          : "1 owns N\n(user_id)"
+auth_users  ||--o{ transactions      : "1 records N\n(user_id)"
+auth_users  ||--o{ chat_logs         : "1 logs N\n(user_id)"
+auth_users  ||--|| budget_preferences : "1 has 1\n(user_id)"
+auth_users  ||--o{ category_budgets  : "1 sets N\n(user_id)"
 
-accounts ||--o{ categories : "1 has N\n(account_id)"
-accounts ||--o{ budgets : "1 has N\n(account_id)"
+accounts    ||--o{ categories        : "1 has N\n(account_id)"
+accounts    ||--o{ budgets           : "1 has N\n(account_id)"
 
-categories |o--o{ transactions : "0..1 classifies 0..N\n(category_id)"
-categories |o--o{ budgets : "0..1 targets 0..N\n(category_id)"
+categories  |o--o{ transactions      : "0..1 classifies 0..N\n(category_id)"
+categories  |o--o{ budgets           : "0..1 targets 0..N\n(category_id)"
+categories  ||--o{ category_budgets  : "1 caps N\n(category_id)"
+
+note bottom of chat_logs
+  Written by Finance Service via a separate
+  MySQL pool. model_name reflects the local
+  FINA model (e.g. fina-qwen2.5-3b-lora-v8),
+  not Gemini.
+end note
+
+note right of accounts
+  role drives FINA's role-aware system prompt
+  and role_guard for action dispatch.
+end note
 
 @enduml

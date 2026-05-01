@@ -51,6 +51,19 @@ export type DashboardData = {
   prediction: { projected_spend: number; currency: string; confidence: number; updated_at: string };
 };
 
+export type ForecastBucket = {
+  total: number;
+  by_category: Record<string, number>;
+};
+
+export type ForecastResponse = {
+  weekly: ForecastBucket;
+  monthly: ForecastBucket;
+  confidence: number;
+  source: 'lstm' | 'fallback' | string;
+  cachedAt?: string;
+};
+
 export const insightsService = {
   async chat(token: string, payload: ChatPayload, options: { onUnauthorized?: () => void } = {}): Promise<ChatResponse> {
     return request<ChatResponse, ChatPayload>(INSIGHTS_BASE, '/api/fina/chat', {
@@ -88,6 +101,13 @@ export const insightsService = {
       method: 'POST',
       token,
       body: {},
+      ...options,
+    });
+  },
+
+  async getForecast(token: string, userId: string, options: { onUnauthorized?: () => void } = {}): Promise<ForecastResponse> {
+    return request<ForecastResponse>(INSIGHTS_BASE, `/api/fina/forecast/${encodeURIComponent(userId)}`, {
+      token,
       ...options,
     });
   },
