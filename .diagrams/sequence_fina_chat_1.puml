@@ -1,0 +1,50 @@
+@startuml sequence
+
+' --- thesis-friendly layout ---
+skinparam dpi 150
+skinparam defaultFontSize 14
+skinparam sequenceMessageAlign center
+skinparam sequenceArrowThickness 1.4
+skinparam roundCorner 8
+skinparam shadowing false
+skinparam responseMessageBelowArrow true
+skinparam ParticipantPadding 12
+skinparam BoxPadding 8
+
+title Role-aware chat with optional action execution
+
+actor User as user
+participant "React\nfrontend" as fe #E3F2FD
+participant "Finance\nService" as fin #C8E6C9
+participant "FINA Brain\n(FastAPI)" as api #FFCC80
+participant "Qwen2.5-3B\n+ QLoRA v8" as qwen #FFCDD2
+database "MySQL\n(finance + chat_logs)" as db #FFF3E0
+
+user -> fe : ask question
+fe   -> fin : POST /api/fina/chat (JWT)
+fin  -> db  : load role + summary
+db  --> fin : role, context
+fin  -> api : POST /chat\n{role, prompt, context}
+
+== build context + retrieve ==
+api  -> fin : GET /summary, /transactions,\n/category-budgets
+fin --> api : structured context\n+ top-k transactions
+
+== generate + validate ==
+api  -> qwen : generate(prompt)
+qwen --> api : raw text
+api  -> api : parse_model_output\n(Pydantic schema)
+
+== act (if any) ==
+alt response.kind == action and role_guard ok
+  api  -> fin : execute action
+  fin  -> db  : INSERT / UPDATE / DELETE
+end
+
+== log + reply ==
+api --> fin : ModelOutput + latency
+fin  -> db  : INSERT chat_logs
+fin --> fe  : reply + action result
+fe  --> user : render
+
+@enduml

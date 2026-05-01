@@ -1,0 +1,75 @@
+@startuml architecture
+
+' --- thesis-friendly layout: vertical, portrait, large fonts ---
+skinparam dpi 150
+skinparam defaultFontSize 14
+skinparam componentFontSize 14
+skinparam packageFontSize 14
+skinparam nodeFontSize 14
+skinparam noteFontSize 12
+skinparam ArrowFontSize 12
+skinparam shadowing false
+skinparam roundCorner 6
+skinparam component {
+  BackgroundColor #FAFAFA
+  BorderColor #37474F
+}
+skinparam node {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+}
+skinparam database {
+  BackgroundColor #FFFDE7
+  BorderColor #5D4037
+}
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #37474F
+}
+
+top to bottom direction
+title FINA system architecture
+
+' --- Mac host: web + API tier ---
+node "Mac host" as mac {
+  [React SPA\n(Vite)] as fe
+  package "Bun Runtime" {
+    [Auth Service\n:4002]    as auth
+    [Finance Service\n:4001\n(/api/fina/* gateway)] as fin
+  }
+  database "MySQL" as db {
+    [auth]     as authdb
+    [finance]  as findb
+    [insights\n(chat_logs)] as insdb
+  }
+}
+
+' --- Windows host: GPU / AI tier ---
+node "Windows host (GPU)" as win {
+  package "FINA Brain (FastAPI)" as brain {
+    [FastAPI Router\n:8105] as api
+    [Context builder\n+ role guard] as ctx
+    [RAG retriever] as rag
+    database "ChromaDB" as chroma
+    [LSTM forecaster] as lstm
+    [Qwen2.5-3B\n+ QLoRA v8] as qwen
+  }
+}
+
+' --- key flows ---
+fe   --> auth : login / register
+fe   --> fin  : REST + chat
+auth --> authdb
+fin  --> findb
+fin  --> insdb : chat logs
+
+fin -[#1565C0,thickness=2]-> api : POST /chat\n(over Tailscale)
+api -[#1565C0,thickness=2,dashed]-> fin : context callbacks\n(/summary, /transactions, ...)
+
+api  --> ctx
+api  --> rag
+api  --> qwen
+ctx  --> lstm
+rag  --> chroma
+
+@enduml

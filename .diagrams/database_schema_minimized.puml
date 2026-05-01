@@ -1,0 +1,113 @@
+@startuml schema
+
+' --- thesis-friendly layout ---
+skinparam dpi 150
+skinparam defaultFontSize 14
+skinparam classFontSize 14
+skinparam packageFontSize 14
+skinparam shadowing false
+skinparam linetype ortho
+skinparam entity {
+  BackgroundColor #FFFDE7
+  BorderColor #5D4037
+  ArrowColor #5D4037
+}
+
+!define TABLE(x) entity x << (T,#FFAAAA) >>
+!define PK(x) <b><u>x</u></b>
+!define FK(x) <i>x</i>
+
+top to bottom direction
+title FINA database schema (essential fields only)
+
+' --- auth db ---
+package "auth" #E3F2FD {
+  TABLE(users) {
+    PK(id) : UUID
+    --
+    phone : VARCHAR UNIQUE
+    password_hash : VARCHAR
+  }
+}
+
+' --- finance db ---
+package "finance" #E8F5E9 {
+  TABLE(accounts) {
+    PK(id) : UUID
+    --
+    FK(user_id) : UUID
+    role : ENUM(STUDENT, WORKER, FREELANCER)
+    currency : VARCHAR (VND)
+  }
+
+  TABLE(categories) {
+    PK(id) : UUID
+    --
+    FK(account_id) : UUID
+    name : VARCHAR
+    type : ENUM(EXPENSE, INCOME)
+  }
+
+  TABLE(transactions) {
+    PK(id) : UUID
+    --
+    FK(user_id) : UUID
+    FK(category_id) : UUID
+    type : ENUM(EXPENSE, INCOME)
+    amount : DECIMAL
+    occurred_at : DATETIME
+  }
+
+  TABLE(budgets) {
+    PK(id) : UUID
+    --
+    FK(account_id) : UUID
+    FK(category_id) : UUID
+    amount_limit : DECIMAL
+    period : ENUM(MONTHLY, WEEKLY)
+  }
+
+  TABLE(category_budgets) {
+    PK(id) : UUID
+    --
+    FK(user_id) : UUID
+    FK(category_id) : UUID
+    monthly_limit : DECIMAL
+  }
+
+  TABLE(budget_preferences) {
+    PK(user_id) : UUID
+    --
+    needs_pct / wants_pct / savings_pct
+  }
+}
+
+' --- insights db ---
+package "insights" #FFF3E0 {
+  TABLE(chat_logs) {
+    PK(id) : BIGINT
+    --
+    FK(user_id) : UUID
+    user_query : TEXT
+    ai_response : TEXT
+    action : JSON
+    model_name : VARCHAR
+    feedback : ENUM(UP, DOWN)
+  }
+}
+
+' --- relationships ---
+users ||--o{ accounts
+users ||--o{ transactions
+users ||--|| budget_preferences
+users ||--o{ category_budgets
+users ||--o{ chat_logs
+
+accounts   ||--o{ categories
+accounts   ||--o{ budgets
+
+categories |o--o{ transactions
+categories |o--o{ budgets
+categories ||--o{ category_budgets
+
+@enduml
