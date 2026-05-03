@@ -15,7 +15,8 @@ from .models import (
     TransactionActionData,
 )
 
-_ACTION_RE = re.compile(r"```action\s*([\s\S]*?)```")
+_ACTION_RE = re.compile(r"```(?:action|json)?\s*([\s\S]*?)```", re.IGNORECASE)
+_JSON_ACTION_RE = re.compile(r"(\{\s*\"action\"\s*:\s*\"[^\"]+\"\s*,\s*\"data\"\s*:\s*\{[\s\S]*?\}\s*\})")
 
 
 def parse_action(text: str) -> ActionPayload | None:
@@ -23,11 +24,10 @@ def parse_action(text: str) -> ActionPayload | None:
 
     Returns None if no block found or validation fails.
     """
-    match = _ACTION_RE.search(text)
-    if not match:
+    raw = _extract_action_json(text)
+    if raw is None:
         return None
 
-    raw = match.group(1).strip()
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -40,25 +40,38 @@ def parse_action(text: str) -> ActionPayload | None:
 
     # Validate the nested data against the correct schema
     try:
-        _validate_action_data(payload)
+        payload.data = _validate_action_data(payload)
     except (ValidationError, ValueError):
         return None
 
     return payload
 
 
-def _validate_action_data(payload: ActionPayload) -> None:
-    """Type-check the data dict against the specific action schema."""
+def _extract_action_json(text: str) -> str | None:
+    """Extract action JSON from an action/json fence or a bare JSON object."""
+    for match in _ACTION_RE.finditer(text):
+        raw = match.group(1).strip()
+        if '"action"' in raw and '"data"' in raw:
+            return raw
+
+    match = _JSON_ACTION_RE.search(text)
+    return match.group(1).strip() if match else None
+
+
+def _validate_action_data(payload: ActionPayload) -> dict:
+    """Type-check and normalize the data dict against the specific action schema."""
     if payload.action == ActionType.CREATE_TRANSACTION:
-        TransactionActionData(**payload.data)
+        return TransactionActionData(**payload.data).model_dump(exclude_none=True)
     elif payload.action == ActionType.CREATE_BUDGET:
-        BudgetActionData(**payload.data)
+        return BudgetActionData(**payload.data).model_dump(exclude_none=True)
     elif payload.action == ActionType.CREATE_CATEGORY:
-        CategoryActionData(**payload.data)
+        return CategoryActionData(**payload.data).model_dump(exclude_none=True)
     else:
         raise ValueError(f"Unknown action: {payload.action}")
 
 
 def strip_action_blocks(text: str) -> str:
     """Remove all ```action ... ``` blocks from model output."""
-    return _ACTION_RE.sub("", text).strip()
+    stripped = _ACTION_RE.sub("", text)
+    stripped = _JSON_ACTION_RE.sub("", stripped)
+    return stripped.strip()

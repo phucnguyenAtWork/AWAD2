@@ -1,159 +1,278 @@
-# Turborepo starter
+# AWAD2
 
-This Turborepo starter is maintained by the Turborepo core team.
+Personal finance monorepo with a React frontend, Bun/Elysia backend services, a Python FastAPI RAG pipeline, and MySQL running through Docker Compose.
 
-## Using this example
+## Stack
 
-Run the following command:
+- **Frontend:** React + Vite + Tailwind CSS in `apps/web`
+- **Runtime/package manager:** Bun
+- **Backend APIs:** Elysia services in `services/auth`, `services/finance`, and `services/insights`
+- **AI/RAG service:** FastAPI app in `services/insights/rag_pipeline`
+- **Database:** MySQL, managed by Docker Compose
+- **ORM:** Drizzle ORM
 
-```sh
-npx create-turbo@latest
+## Repository Layout
+
+```txt
+apps/web                         React/Vite frontend
+services/auth                    Auth API, JWT login/register/profile
+services/finance                 Finance API for accounts, categories, budgets, transactions
+services/insights                TypeScript insights service and Drizzle schema
+services/insights/rag_pipeline   Python FastAPI RAG/chat pipeline
+packages/*                       Shared workspace packages/config
+docker-compose.yaml              MySQL and phpMyAdmin only
 ```
 
-## What's inside?
+## Requirements
 
-This Turborepo includes the following packages/apps:
+- Node.js `>=18`
+- Bun `>=1.1.0` (`packageManager` is `bun@1.1.34`)
+- Docker Desktop or Docker Engine
+- Python `3.12+` recommended for the RAG pipeline
 
-### Apps and Packages
+## Setup
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+Install JavaScript dependencies from the repo root:
 
 ```sh
-cd my-turborepo
-turbo build
+bun install
 ```
 
-Without global `turbo`, use your package manager:
+Create your local environment file:
 
 ```sh
-cd my-turborepo
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+cp .env.example .env
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+Update `.env` with real local values. Important variables:
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+```txt
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=appuser
+MYSQL_PASSWORD=...
+FINANCE_DATABASE=finance
+AUTH_DATABASE=auth
+INSIGHTS_DATABASE=insights
+JWT_SECRET=change-me-to-at-least-24-chars
+JWT_EXPIRES_IN=7d
+GEMINI_API_KEY=...
+RAG_PORT=4004
+FINANCE_API_URL=http://localhost:4001
+FRONTEND_ORIGIN=http://localhost:5173
+```
+
+## Start Infrastructure
+
+Docker Compose currently starts only MySQL and phpMyAdmin. It does not start the frontend or API services.
 
 ```sh
-turbo build --filter=docs
+docker compose up -d
 ```
 
-Without global `turbo`:
+Default ports:
+
+| Service | URL |
+| --- | --- |
+| MySQL | `localhost:3306` |
+| phpMyAdmin | `http://localhost:8080` |
+
+Stop infrastructure:
 
 ```sh
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+docker compose down
 ```
 
-### Develop
+## Database Migrations
 
-To develop all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+Run migrations after MySQL is healthy and `.env` is configured:
 
 ```sh
-cd my-turborepo
-turbo dev
+cd services/auth
+bun run db:migrate
 ```
-
-Without global `turbo`, use your package manager:
 
 ```sh
-cd my-turborepo
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
+cd services/finance
+bun run db:migrate
 ```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
 
 ```sh
-turbo dev --filter=web
+cd services/insights
+bun run db:migrate
 ```
 
-Without global `turbo`:
+## Run The App
+
+Run each service in its own terminal.
+
+### Auth API
 
 ```sh
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
+cd services/auth
+bun run dev
 ```
 
-### Remote Caching
+Runs on `http://localhost:4002`.
 
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+Health check:
 
 ```sh
-cd my-turborepo
-turbo login
+curl http://localhost:4002/health
 ```
 
-Without global `turbo`, use your package manager:
+### Finance API
 
 ```sh
-cd my-turborepo
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
+cd services/finance
+bun run dev
 ```
 
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
+Runs on `http://localhost:4001`.
 
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+Health check:
 
 ```sh
-turbo link
+curl http://localhost:4001/health
 ```
 
-Without global `turbo`:
+### Python RAG Pipeline
+
+Create and activate a Python virtual environment:
 
 ```sh
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
+cd services/insights
+python -m venv rag_pipeline/.venv
+source rag_pipeline/.venv/bin/activate
+pip install -r rag_pipeline/requirements.txt
 ```
 
-## Useful Links
+Start the RAG service:
 
-Learn more about the power of Turborepo:
+```sh
+python -m rag_pipeline.main
+```
 
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+Runs on `http://localhost:4004`.
+
+Health check:
+
+```sh
+curl http://localhost:4004/health
+```
+
+### TypeScript Insights Service
+
+This service runs separately from the Python RAG pipeline. Start it only if you are working on the TypeScript insights API path.
+
+```sh
+cd services/insights
+bun run dev
+```
+
+Runs on `http://localhost:4003`.
+
+### Frontend
+
+```sh
+cd apps/web
+bun run dev
+```
+
+Runs on `http://localhost:5173`.
+
+The frontend calls these default APIs:
+
+| API | Default URL |
+| --- | --- |
+| Auth | `http://localhost:4002` |
+| Finance | `http://localhost:4001` |
+| Insights/RAG | `http://localhost:4004` |
+
+## Common Commands
+
+From the repo root:
+
+```sh
+bun run build
+bun run lint
+bun run check-types
+bun run format
+```
+
+Run all workspace dev scripts through Turborepo:
+
+```sh
+bun run dev
+```
+
+For day-to-day debugging, starting services individually is usually clearer because each terminal shows one service's logs.
+
+## Troubleshooting
+
+### `localhost:5173` refused to connect
+
+The frontend is not running. Start it again:
+
+```sh
+cd apps/web
+bun run dev
+```
+
+Check whether anything is listening on the port:
+
+```sh
+lsof -nP -iTCP:5173 -sTCP:LISTEN
+```
+
+### `Port 5173 is already in use`
+
+Another Vite process is already bound to the frontend port. Find it:
+
+```sh
+lsof -nP -iTCP:5173 -sTCP:LISTEN
+```
+
+Stop the existing process or use the already-running `http://localhost:5173` tab.
+
+### `POST http://localhost:4002/auth/login net::ERR_CONNECTION_REFUSED`
+
+The auth service is not running:
+
+```sh
+cd services/auth
+bun run dev
+```
+
+### `401 Unauthorized` from `/insights/logs`
+
+The browser token is missing, expired, or was created before an auth environment change. Log out and log in again. Local development uses `JWT_EXPIRES_IN=7d` when configured in `.env`.
+
+### Python RAG `Address already in use`
+
+The RAG service is already running on `4004`. Check the process:
+
+```sh
+lsof -nP -iTCP:4004 -sTCP:LISTEN
+```
+
+Use the existing service or stop it before starting a new one.
+
+### Chat says an action succeeded but no budget or transaction appears
+
+Make sure all required services are running:
+
+```sh
+curl http://localhost:4001/health
+curl http://localhost:4002/health
+curl http://localhost:4004/health
+```
+
+The Python RAG service creates budgets and transactions by calling the Finance API on `http://localhost:4001`.
+
+## Notes
+
+- `docker compose up -d` starts database infrastructure only.
+- Vite is configured with `strictPort: true`, so port `5173` must be free before starting the frontend.
+- The Python RAG pipeline reads the root `.env` file.
+- Auth, Finance, and Insights services all need the same `JWT_SECRET` so tokens verify across services.

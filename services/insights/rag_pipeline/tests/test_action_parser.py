@@ -20,6 +20,24 @@ Done!'''
         assert result.data["amount"] == 50000
         assert result.data["description"] == "Coffee"
 
+    def test_valid_json_fence(self):
+        text = '''I'll log that now.
+
+```json
+{"action":"create_transaction","data":{"type":"EXPENSE","amount":"50000","description":"Coffee","categoryId":"cat-1","occurredAt":"2026-03-31"}}
+```'''
+        result = parse_action(text)
+        assert result is not None
+        assert result.action.value == "create_transaction"
+        assert result.data["amount"] == 50000
+
+    def test_valid_bare_action_json(self):
+        text = 'Done {"action":"create_category","data":{"name":"Transport","type":"EXPENSE","icon":null}}'
+        result = parse_action(text)
+        assert result is not None
+        assert result.action.value == "create_category"
+        assert result.data["name"] == "Transport"
+
     def test_valid_budget(self):
         text = '''```action
 {"action":"create_budget","data":{"accountId":"acc-1","categoryId":"cat-2","amountLimit":2000000,"period":"MONTHLY","startDate":"2026-03-01","endDate":"2026-03-31"}}
@@ -59,9 +77,8 @@ Done!'''
     def test_unknown_fields_stripped(self):
         text = '```action\n{"action":"create_transaction","data":{"type":"EXPENSE","amount":1000,"description":"Test","hackField":"evil"}}\n```'
         result = parse_action(text)
-        # Extra fields in data dict are allowed by dict[str, Any] but validated by sub-model
-        # The TransactionActionData validator will ignore extra fields
         assert result is not None
+        assert "hackField" not in result.data
 
 
 class TestStripActionBlocks:
@@ -75,3 +92,7 @@ class TestStripActionBlocks:
     def test_multiple_blocks(self):
         text = '```action\n{}\n```\nMiddle\n```action\n{}\n```'
         assert strip_action_blocks(text) == "Middle"
+
+    def test_removes_json_action_block(self):
+        text = 'Before\n```json\n{"action":"create_category","data":{"name":"Transport","type":"EXPENSE"}}\n```\nAfter'
+        assert strip_action_blocks(text) == "Before\n\nAfter"

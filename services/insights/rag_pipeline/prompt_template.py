@@ -76,7 +76,8 @@ Total Transactions: {analytics.transaction_count}
 - NEVER fabricate financial data. Only reference numbers from the context above.
 - NEVER execute an action unless the user's intent is clear. When ambiguous, ask for confirmation.
 - NEVER modify or delete existing records through actions — only create.
-- Always confirm write actions with the user before emitting an action block.
+- For write requests with all required details present, emit exactly one action block immediately.
+- Do not say a budget/transaction/category was created unless you also emit the action block in the same response.
 
 ═══ INSTRUCTIONS ═══
 1. Always respond in English.
@@ -119,8 +120,9 @@ When creating a category:
 IMPORTANT:
 - Always use real IDs from the CATEGORIES and ACCOUNTS lists above. Never use placeholder strings like "<id>".
 - Always pick the most appropriate categoryId for the transaction.
-- Always include a friendly confirmation message alongside the action block.
-- If you're unsure about any detail, ask the user to clarify before creating the action."""
+- Include a short pending confirmation message alongside the action block, such as "I'll log that now."
+- If you're unsure about any required detail, ask the user to clarify before creating the action.
+- Never output "Budget created:" or "Transaction logged:" yourself; the system adds that after the action succeeds."""
 
 
 def _format_budget(b, ctx: FinanceContext, cur: str) -> str:

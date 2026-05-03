@@ -49,6 +49,16 @@ export function ChatPage() {
     }
   };
 
+  const handleDelete = async (logId: number) => {
+    if (!token) return;
+    try {
+      await insightsService.deleteLog(token, logId, { onUnauthorized: logout });
+      setLogs((prev) => prev.filter((l) => l.id !== logId));
+    } catch {
+      setError('Failed to delete message');
+    }
+  };
+
   const handleFeedback = async (logId: number, feedback: 1 | -1) => {
     if (!token) return;
     try {
@@ -119,8 +129,8 @@ export function ChatPage() {
             </div>
           )}
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-900 border border-slate-100'}`}>
+            <div key={msg.id} className={`group flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm shadow-sm relative ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-900 border border-slate-100'}`}>
                 <div className="text-[11px] opacity-70 mb-1 font-medium">{msg.role === 'user' ? 'You' : 'AI Assistant'}</div>
                 {msg.role === 'ai' ? renderAiText(msg.text) : (
                   <div className="whitespace-pre-wrap leading-relaxed">{msg.text}</div>
@@ -151,6 +161,15 @@ export function ChatPage() {
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
                         <path d="M19 11.75a1.25 1.25 0 10-2.5 0v-7.5a1.25 1.25 0 102.5 0v7.5zM9 17c1.034 0 1.997-.685 2.321-1.682l.654-2.014h2.775A2.25 2.25 0 0017 11.054V5.75A2.25 2.25 0 0014.75 3.5H6.113a2.25 2.25 0 00-2.19 1.742L2.725 10.366A2.25 2.25 0 004.912 13H7.5v2.5A1.5 1.5 0 009 17z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => void handleDelete(msg.logId)}
+                      className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete conversation"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                        <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
                       </svg>
                     </button>
                     {msg.latencyMs != null && (

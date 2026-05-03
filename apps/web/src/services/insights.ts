@@ -53,4 +53,12 @@ export const insightsService = {
       ...options,
     });
   },
+
+  async deleteLog(token: string, logId: number, options: { onUnauthorized?: () => void } = {}): Promise<void> {
+    await request(INSIGHTS_BASE, `/insights/logs/${logId}`, {
+      method: 'DELETE',
+      token,
+      ...options,
+    });
+  },
 };

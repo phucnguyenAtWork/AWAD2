@@ -191,10 +191,10 @@ package "Finance Service (port 4001)" #E8F5E9 {
 }
 
 ' ============================================================
-'  INSIGHTS SERVICE (TypeScript — port 4003)
+'  INSIGHTS SERVICE (TypeScript — port 4003, legacy/simple path)
 ' ============================================================
 
-package "Insights Service — TS (port 4003)" #FFF3E0 {
+package "Insights Service — TS (port 4003, legacy)" #FFF3E0 {
 
   class ChatController <<Controller>> {
     + POST /insights/chat(body): ChatResponse
@@ -239,7 +239,7 @@ package "Insights Service — TS (port 4003)" #FFF3E0 {
 }
 
 ' ============================================================
-'  RAG PIPELINE (Python FastAPI — port 4004)
+'  RAG PIPELINE (Python FastAPI — current Gemini path, port 4004)
 ' ============================================================
 
 package "RAG Pipeline — Python (port 4004)" #FCE4EC {
@@ -248,6 +248,7 @@ package "RAG Pipeline — Python (port 4004)" #FCE4EC {
     + POST /insights/chat(body): ChatResponse
     + GET /insights/logs(query): ChatLogRow[]
     + GET /insights/logs/{id}: ChatLogRow
+    + PATCH /insights/logs/{id}/feedback(body): ChatLogRow
     + DELETE /insights/logs/{id}: {success}
     + GET /health(): {status, engine}
   }
@@ -258,11 +259,24 @@ package "RAG Pipeline — Python (port 4004)" #FCE4EC {
     - timer: monotonic
   }
 
+  class QueryClassifier <<Guardrail>> {
+    + classify(prompt): ClassificationResult
+    - _extract_categories(text): list[str]
+    - _extract_amount(text): float | None
+    - _extract_timeframe(text): str | None
+  }
+
   class ContextBuilder <<Retrieval>> {
     - _cache: TTLCache[str, (FinanceContext, Analytics)]
     + build_context(token, account_id): (ctx, analytics, currency)
     + compute_analytics(ctx, currency): Analytics
     + cap_context(ctx): FinanceContext
+  }
+
+  class ContextFilter <<Retrieval>> {
+    + filter_context(ctx, classification): FinanceContext
+    - _filter_transactions_by_category(ctx, mentioned_cats): Transaction[]
+    - _filter_budgets_by_category(ctx, mentioned_cats): Budget[]
   }
 
   class PromptTemplate <<Prompt>> {
@@ -303,19 +317,24 @@ package "RAG Pipeline — Python (port 4004)" #FCE4EC {
     + create_log(...): ChatLogRow
     + list_logs(account_id, limit): ChatLogRow[]
     + get_log(id): ChatLogRow | None
+    + update_feedback(id, feedback): ChatLogRow | None
     + delete_log(id): ChatLogRow | None
   }
 
   RAGRouter --> RAGChatService
   RAGRouter --> JWTAuth
+  RAGChatService --> QueryClassifier
   RAGChatService --> ContextBuilder
+  RAGChatService --> ContextFilter
   RAGChatService --> PromptTemplate
   RAGChatService --> ActionParser
   RAGChatService --> ActionExecutor
   RAGChatService --> GeminiClient
   RAGChatService --> Database
   ContextBuilder --> FinanceClient
+  ContextFilter --> FinanceContext
   ActionExecutor --> FinanceClient
+  ActionParser --> ActionPayload
 }
 
 ' ============================================================

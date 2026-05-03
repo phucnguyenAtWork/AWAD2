@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, time, timezone
+
 import httpx
 
 from .config import settings
@@ -71,24 +73,52 @@ async def fetch_context(token: str) -> FinanceContext:
 # ─── Write operations (used by action executor) ──────────────────────
 
 async def create_transaction(token: str, data: dict) -> dict:
-    resp = await _get_client().post(
-        "/transactions", headers=_headers(token), json=data
-    )
-    resp.raise_for_status()
+    payload = _normalize_transaction_payload(data)
+    resp = await _get_client().post("/transactions", headers=_headers(token), json=payload)
+    _raise_for_status(resp, payload)
     return resp.json()
 
 
 async def create_budget(token: str, data: dict) -> dict:
-    resp = await _get_client().post(
-        "/budgets", headers=_headers(token), json=data
-    )
-    resp.raise_for_status()
+    resp = await _get_client().post("/budgets", headers=_headers(token), json=data)
+    _raise_for_status(resp, data)
     return resp.json()
 
 
 async def create_category(token: str, data: dict) -> dict:
-    resp = await _get_client().post(
-        "/categories", headers=_headers(token), json=data
-    )
-    resp.raise_for_status()
+    resp = await _get_client().post("/categories", headers=_headers(token), json=data)
+    _raise_for_status(resp, data)
     return resp.json()
+
+
+def _normalize_transaction_payload(data: dict) -> dict:
+    """Convert LLM-friendly action data into the Finance API contract."""
+    payload = dict(data)
+    occurred_at = payload.get("occurredAt")
+    if isinstance(occurred_at, str) and _is_date_only(occurred_at):
+        payload["occurredAt"] = _to_utc_iso(
+            datetime.strptime(occurred_at, "%Y-%m-%d").date(),
+        )
+    return payload
+
+
+def _to_utc_iso(date_value) -> str:
+    return datetime.combine(date_value, time.min, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _is_date_only(value: str) -> bool:
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
+def _raise_for_status(resp: httpx.Response, payload: dict) -> None:
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(
+            f"Finance API {resp.status_code} for {resp.request.method} {resp.request.url}. "
+            f"Response: {resp.text}. Payload: {payload}"
+        ) from exc

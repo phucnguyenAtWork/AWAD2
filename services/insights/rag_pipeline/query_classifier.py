@@ -57,11 +57,6 @@ _TIMEFRAME_RE = re.compile(
 
 # Keywords mapped to intents (checked in order, first match wins)
 _INTENT_PATTERNS: list[tuple[Intent, list[str]]] = [
-    (Intent.LOG_TRANSACTION, [
-        r"\b(i\s+)?(spent|paid|bought|purchased|received|got paid|earned|income of)\b",
-        r"\b(log|record|add)\s+(a\s+)?(transaction|expense|income|spending|payment)\b",
-        r"\b(chi|tiêu|mua|nhận|lương)\b",
-    ]),
     (Intent.CREATE_BUDGET, [
         r"\b(create|set|make|add)\s+(a\s+)?budget\b",
         r"\bbudget\s+\d",
@@ -70,6 +65,12 @@ _INTENT_PATTERNS: list[tuple[Intent, list[str]]] = [
     (Intent.CREATE_CATEGORY, [
         r"\b(create|add|make|new)\s+(a\s+)?category\b",
         r"\b(tạo|thêm)\s+(danh\s*mục|loại)\b",
+    ]),
+    (Intent.LOG_TRANSACTION, [
+        r"\b(i\s+)?(spent|paid|bought|purchased|received|got paid|earned|income of)\b",
+        r"\b(log|record|add)\s+(a\s+)?(transaction|expense|income|spending|payment)\b",
+        r"\b(log|record|add)\b.{0,80}\d",
+        r"\b(chi|tiêu|mua|nhận|lương)\b",
     ]),
     (Intent.BUDGET_QUERY, [
         r"\b(budget|over\s*budget|under\s*budget|budget\s*left|remaining\s*budget)\b",

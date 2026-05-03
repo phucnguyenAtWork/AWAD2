@@ -5,7 +5,7 @@ import respx
 from httpx import Response
 
 from rag_pipeline.config import settings
-from rag_pipeline.finance_client import fetch_context, create_transaction
+from rag_pipeline.finance_client import fetch_context, create_transaction, _normalize_transaction_payload
 
 
 BASE = settings.FINANCE_API_URL
@@ -82,3 +82,14 @@ async def test_create_transaction():
     )
     result = await create_transaction("token", {"type": "EXPENSE", "amount": 50000, "description": "Coffee"})
     assert result["id"] == "tx-1"
+
+
+def test_normalize_transaction_payload_converts_date_to_datetime():
+    payload = _normalize_transaction_payload({
+        "type": "EXPENSE",
+        "amount": 50000,
+        "description": "Coffee",
+        "occurredAt": "2026-05-03",
+    })
+
+    assert payload["occurredAt"] == "2026-05-03T00:00:00Z"

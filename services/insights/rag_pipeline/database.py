@@ -62,12 +62,13 @@ def _row_to_log(row: tuple) -> ChatLogRow:
         request_id=row[10],
         feedback=row[11],
         timestamp=row[12],
+        deleted_at=row[13],
     )
 
 
 _SELECT_COLS = (
     "id, account_id, user_query, ai_response, context_snapshot, "
-    "action, model_name, latency_ms, prompt_tokens, response_tokens, request_id, feedback, timestamp"
+    "action, model_name, latency_ms, prompt_tokens, response_tokens, request_id, feedback, timestamp, deleted_at"
 )
 
 
@@ -119,7 +120,7 @@ async def list_logs(account_id: str, limit: int = 100) -> list[ChatLogRow]:
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                f"SELECT {_SELECT_COLS} FROM chat_logs WHERE account_id = %s ORDER BY timestamp DESC LIMIT %s",
+                f"SELECT {_SELECT_COLS} FROM chat_logs WHERE account_id = %s AND deleted_at IS NULL ORDER BY timestamp DESC LIMIT %s",
                 (account_id, limit),
             )
             rows = await cur.fetchall()
@@ -131,7 +132,7 @@ async def get_log(log_id: int) -> ChatLogRow | None:
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                f"SELECT {_SELECT_COLS} FROM chat_logs WHERE id = %s",
+                f"SELECT {_SELECT_COLS} FROM chat_logs WHERE id = %s AND deleted_at IS NULL",
                 (log_id,),
             )
             row = await cur.fetchone()
@@ -160,5 +161,8 @@ async def delete_log(log_id: int) -> ChatLogRow | None:
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            await cur.execute("DELETE FROM chat_logs WHERE id = %s", (log_id,))
+            await cur.execute(
+                "UPDATE chat_logs SET deleted_at = NOW() WHERE id = %s",
+                (log_id,),
+            )
     return existing

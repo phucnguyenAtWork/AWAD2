@@ -6,6 +6,7 @@ import time
 import uuid
 
 from . import database, model_client
+from .action_builder import build_fallback_action
 from .action_executor import execute_action
 from .action_parser import parse_action, strip_action_blocks
 from .config import settings
@@ -103,6 +104,11 @@ async def chat(
 
     # 8. Parse and execute action
     action_payload = parse_action(ai_text)
+    if not action_payload:
+        action_payload = build_fallback_action(prompt, classification, ctx)
+        if action_payload:
+            print(f"[RAG:{request_id[:8]}] Built fallback action: {action_payload.action.value}")
+
     executed_action = None
     if action_payload:
         print(f"[RAG:{request_id[:8]}] Detected action: {action_payload.action.value}")
